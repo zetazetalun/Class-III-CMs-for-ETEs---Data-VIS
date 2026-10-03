@@ -1,0 +1,8 @@
+{
+  "name": "Multi Agent SLR for CMs in ETEs - DATA VIS",
+  "description": "Front-end data visualisation dashboard for Systematic Literature Reviews on Construction Methods in Extraterrestrial Environments. Interactive knowledge graph, cross-tabulation heatmaps, and research analysis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
