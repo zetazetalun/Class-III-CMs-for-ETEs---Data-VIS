@@ -96,8 +96,8 @@ export interface ReviewSummary {
   metadata?: {
     appVersion: string;
     generationDate: string;
-    githubRepoUrl: string;
-    githubRef?: string;
+    sourceUrl?: string;
+    sourceRef?: string;
   };
   performance?: {
     totalTimeMs: number;

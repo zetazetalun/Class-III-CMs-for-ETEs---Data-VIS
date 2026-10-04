@@ -3,7 +3,7 @@ import {
   Database, 
   BarChart3, 
   MessageSquare, 
-  Github, 
+  Github,
   RefreshCw,
   ChevronRight,
   FileText,
@@ -16,9 +16,6 @@ import {
   Copy,
   ExternalLink,
   Layers,
-  Globe,
-  Upload,
-  Info,
   Share2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -174,13 +171,7 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
 
-  // Sync Modal
-  const [syncModalOpen, setSyncModalOpen] = useState(false);
-  const [remoteSyncUrl, setRemoteSyncUrl] = useState('https://ais-pre-l2q5w2kqjoythmfxhzacal-384167759363.asia-east1.run.app/vis');
-  const [remoteSyncToken, setRemoteSyncToken] = useState('');
-  const [isSyncingRemote, setIsSyncingRemote] = useState(false);
-  const [syncStatusMsg, setSyncStatusMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
-  const [visSnapshots, setVisSnapshots] = useState<{ id: number, createdAt: string, paperCount: number, mappingCount: number, chatCount: number }[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Collect available publication years
   const availableYears = useMemo(() => {
@@ -336,136 +327,19 @@ export default function App() {
     }
   };
 
-  const fetchSnapshotsFromServer = async () => {
-    try {
-      const res = await fetch('/api/vis-state/snapshots');
-      if (res.ok) {
-        const data = await res.json();
-        if (data.snapshots) setVisSnapshots(data.snapshots);
-      }
-    } catch (e) {
-      console.warn("Failed to fetch snapshots", e);
-    }
-  };
-
-  const restoreSnapshot = async (id: number) => {
-    try {
-      const res = await fetch(`/api/vis-state/snapshots/${id}/restore`, { method: 'POST' });
-      if (res.ok) {
-        fetchVisualizationState(true);
-        setSyncStatusMsg({ type: 'success', text: `Reverted to snapshot #${id}.` });
-      }
-    } catch (e: any) {
-      setSyncStatusMsg({ type: 'error', text: `Failed to restore snapshot: ${e.message}` });
-    }
-  };
-
   const handleDirectRefresh = async () => {
-    setIsSyncingRemote(true);
-    setSyncStatusMsg({ type: 'info', text: 'Refreshing latest analysis state from parent tool...' });
+    setIsRefreshing(true);
     try {
       const res = await fetch('/api/sync/refresh', { method: 'POST' });
       const data = await res.json();
       if (res.ok && data.success) {
         await fetchVisualizationState(true);
-        setSyncStatusMsg({
-          type: 'success',
-          text: `Refreshed successfully! Loaded ${data.papersCount} papers and ${data.mappingsCount} metadata mappings from parent tool.`
-        });
-      } else {
-        await handleSyncWithGitHub();
       }
-    } catch {
-      await handleSyncWithGitHub();
+    } catch (err) {
+      console.error("Failed to refresh dataset:", err);
     } finally {
-      setIsSyncingRemote(false);
+      setIsRefreshing(false);
     }
-  };
-
-  const handleSyncWithGitHub = async () => {
-    setIsSyncingRemote(true);
-    setSyncStatusMsg({ type: 'info', text: 'Pulling latest analysis dataset from GitHub archive...' });
-    try {
-      const res = await fetch('/api/sync/github', { method: 'POST' });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        await fetchVisualizationState(true);
-        setSyncStatusMsg({
-          type: 'success',
-          text: `Successfully synced ${data.papersCount} papers and ${data.mappingsCount} metadata mappings from GitHub repository!`
-        });
-      } else {
-        throw new Error(data.error || 'Failed to sync with GitHub');
-      }
-    } catch (err: any) {
-      setSyncStatusMsg({ type: 'error', text: err.message || 'GitHub sync failed' });
-    } finally {
-      setIsSyncingRemote(false);
-    }
-  };
-
-  const handleSyncWithRemoteApplet = async () => {
-    if (!remoteSyncUrl) return;
-    setIsSyncingRemote(true);
-    setSyncStatusMsg({ type: 'info', text: 'Connecting to remote parent tool...' });
-    try {
-      const res = await fetch('/api/sync/remote-applet', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: remoteSyncUrl, token: remoteSyncToken })
-      });
-      const data = await res.json();
-      if (data.success) {
-        await fetchVisualizationState(true);
-        setSyncStatusMsg({
-          type: 'success',
-          text: `Successfully synced ${data.papersCount} papers from remote applet!`
-        });
-      } else if (data.isAuthProtected) {
-        setSyncStatusMsg({ type: 'info', text: data.message });
-      } else {
-        throw new Error(data.error || 'Failed to sync with remote applet');
-      }
-    } catch (err: any) {
-      setSyncStatusMsg({ type: 'error', text: err.message || 'Remote sync failed' });
-    } finally {
-      setIsSyncingRemote(false);
-    }
-  };
-
-  const handleImportJsonFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setIsSyncingRemote(true);
-    setSyncStatusMsg({ type: 'info', text: `Importing ${file.name}...` });
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text);
-      const res = await fetch('/api/sync/import-json', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(parsed)
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        await fetchVisualizationState(true);
-        setSyncStatusMsg({
-          type: 'success',
-          text: `Successfully imported ${data.papersCount} papers and ${data.mappingsCount} mappings!`
-        });
-      } else {
-        throw new Error(data.error || 'Import failed');
-      }
-    } catch (err: any) {
-      setSyncStatusMsg({ type: 'error', text: err.message || 'Failed to parse JSON file' });
-    } finally {
-      setIsSyncingRemote(false);
-      e.target.value = '';
-    }
-  };
-
-  const handleExportJson = () => {
-    window.location.href = '/api/sync/export-json';
   };
 
   const copyAllBibtex = () => {
@@ -620,7 +494,6 @@ export default function App() {
   useEffect(() => {
     setIsMounted(true);
     fetchVisualizationState(true);
-    fetchSnapshotsFromServer();
   }, []);
 
   return (
@@ -658,11 +531,11 @@ export default function App() {
 
         <div className="mt-auto pb-4 flex flex-col items-center gap-3">
           <a 
-            href="https://github.com/zetazetalun/Space-Architecture-Literature" 
+            href="https://github.com/zetazetalun" 
             target="_blank" 
             rel="noopener noreferrer"
-            className="w-10 h-10 flex items-center justify-center text-black/30 hover:text-black transition-colors"
-            title="View Data Archive on GitHub"
+            className="w-10 h-10 flex items-center justify-center text-black/30 hover:text-black transition-colors rounded-xl hover:bg-black/5"
+            title="GitHub (@zetazetalun)"
           >
             <Github size={20} />
           </a>
@@ -674,7 +547,7 @@ export default function App() {
         {/* Sticky Top Header */}
         <header className="h-16 bg-white border-b border-black/5 flex items-center justify-between px-6 sm:px-8 sticky top-0 z-40">
           <div className="flex items-center gap-3">
-            <h1 className="text-base sm:text-lg font-semibold tracking-tight">Multi Agent SLR for CMs in ETEs</h1>
+            <h1 className="text-base sm:text-lg font-semibold tracking-tight">Systematic Literature Review for CMs in ETEs</h1>
           </div>
           
           <div className="flex items-center gap-2.5">
@@ -686,16 +559,13 @@ export default function App() {
 
             <button
               onClick={handleDirectRefresh}
-              disabled={isSyncingRemote || visLoading}
+              disabled={isRefreshing || visLoading}
               className="flex items-center gap-1.5 bg-black hover:bg-black/80 text-white px-3.5 py-1.5 rounded-xl text-xs font-semibold transition-all shadow-xs cursor-pointer disabled:opacity-50"
-              title="Fetch latest dataset from parent tool"
+              title="Refresh literature dataset"
             >
-              <RefreshCw size={13} className={isSyncingRemote || visLoading ? 'animate-spin' : ''} />
-              <span>{isSyncingRemote || visLoading ? 'Refreshing...' : 'Refresh Data'}</span>
+              <RefreshCw size={13} className={isRefreshing || visLoading ? 'animate-spin' : ''} />
+              <span>{isRefreshing || visLoading ? 'Refreshing...' : 'Refresh Data'}</span>
             </button>
-
-
-
           </div>
         </header>
 
@@ -710,16 +580,16 @@ export default function App() {
                 <div className="space-y-2">
                   <h2 className="text-xl font-bold tracking-tight">Connecting to Literature Review Data</h2>
                   <p className="text-sm text-black/60 leading-relaxed">
-                    Loading systematic literature review findings and visualisations from the parent database...
+                    Loading systematic literature review findings and visualisations...
                   </p>
                 </div>
                 <button
                   onClick={handleDirectRefresh}
-                  disabled={visLoading || isSyncingRemote}
+                  disabled={visLoading || isRefreshing}
                   className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white px-5 py-3 rounded-2xl text-sm font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50 shadow-sm cursor-pointer"
                 >
-                  <RefreshCw size={16} className={visLoading || isSyncingRemote ? 'animate-spin' : ''} />
-                  {visLoading || isSyncingRemote ? 'Loading Dataset...' : 'Refresh Dataset'}
+                  <RefreshCw size={16} className={visLoading || isRefreshing ? 'animate-spin' : ''} />
+                  {visLoading || isRefreshing ? 'Loading Dataset...' : 'Refresh Dataset'}
                 </button>
               </div>
             </div>
@@ -1288,32 +1158,6 @@ export default function App() {
             parameters={parameters}
           />
         )}
-        {syncModalOpen && (
-          <DataSourceModal
-            isOpen={syncModalOpen}
-            onClose={() => {
-              setSyncModalOpen(false);
-              setSyncStatusMsg(null);
-            }}
-            papersCount={reviewPapers.length || papersState.length}
-            mappingsCount={reviewMappings.length || mappingsState.length}
-            syncTime={visSyncTime || 'Recently'}
-            onDirectRefresh={handleDirectRefresh}
-            onSyncGitHub={handleSyncWithGitHub}
-            onSyncRemote={handleSyncWithRemoteApplet}
-            onImportJson={handleImportJsonFile}
-            onExportJson={handleExportJson}
-            onExportExcel={downloadExcel}
-            isSyncing={isSyncingRemote}
-            remoteUrl={remoteSyncUrl}
-            setRemoteUrl={setRemoteSyncUrl}
-            remoteToken={remoteSyncToken}
-            setRemoteToken={setRemoteSyncToken}
-            statusMsg={syncStatusMsg}
-            snapshots={visSnapshots}
-            onRestoreSnapshot={restoreSnapshot}
-          />
-        )}
       </AnimatePresence>
     </div>
   );
@@ -1502,247 +1346,4 @@ function PaperDetailsModal({ paper, onClose, mappings, parameters }: { paper: Pa
   );
 }
 
-function DataSourceModal({
-  isOpen,
-  onClose,
-  papersCount,
-  mappingsCount,
-  syncTime,
-  onDirectRefresh,
-  onSyncGitHub,
-  onSyncRemote,
-  onImportJson,
-  onExportJson,
-  onExportExcel,
-  isSyncing,
-  remoteUrl,
-  setRemoteUrl,
-  remoteToken,
-  setRemoteToken,
-  statusMsg,
-  snapshots,
-  onRestoreSnapshot
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  papersCount: number;
-  mappingsCount: number;
-  syncTime: string;
-  onDirectRefresh: () => void;
-  onSyncGitHub: () => void;
-  onSyncRemote: () => void;
-  onImportJson: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  onExportJson: () => void;
-  onExportExcel: () => void;
-  isSyncing: boolean;
-  remoteUrl: string;
-  setRemoteUrl: (u: string) => void;
-  remoteToken: string;
-  setRemoteToken: (t: string) => void;
-  statusMsg: { type: 'success' | 'error' | 'info'; text: string } | null;
-  snapshots: any[];
-  onRestoreSnapshot: (id: number) => void;
-}) {
-  if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 10 }}
-        className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl border border-black/10 overflow-hidden flex flex-col max-h-[90vh]"
-      >
-        {/* Header */}
-        <div className="p-6 border-b border-black/5 flex items-center justify-between bg-black/[0.02]">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-sm">
-              <Database size={20} />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-black/90">Data Source & Synchronization</h2>
-              <p className="text-xs text-black/50">Multi Agent Systematic Literature Review Dataset</p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-9 h-9 rounded-full bg-black/5 hover:bg-black/10 flex items-center justify-center text-black/60 transition-colors cursor-pointer"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        {/* Modal Body */}
-        <div className="p-6 overflow-y-auto space-y-6">
-          {/* Status Banner */}
-          <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200/80 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-emerald-900">Live Active Dataset</p>
-                <p className="text-xs text-emerald-700">
-                  <strong>{papersCount}</strong> Papers Analyzed &bull; <strong>{mappingsCount}</strong> Parameter Mappings
-                </p>
-              </div>
-            </div>
-            {syncTime && (
-              <span className="text-[11px] font-medium text-emerald-800 bg-white/70 px-2.5 py-1 rounded-full border border-emerald-200">
-                Synced at {syncTime}
-              </span>
-            )}
-          </div>
-
-          {/* Feedback status message */}
-          {statusMsg && (
-            <div className={cn(
-              "p-4 rounded-2xl text-xs flex items-start gap-2 border leading-relaxed",
-              statusMsg.type === 'success' ? "bg-emerald-50 border-emerald-200 text-emerald-800" :
-              statusMsg.type === 'error' ? "bg-red-50 border-red-200 text-red-800" :
-              "bg-indigo-50 border-indigo-200 text-indigo-800"
-            )}>
-              <Info size={16} className="shrink-0 mt-0.5" />
-              <span>{statusMsg.text}</span>
-            </div>
-          )}
-
-          {/* Source 1: Parent Tool Feed (Primary) */}
-          <div className="p-5 rounded-2xl border border-indigo-200 bg-indigo-50/30 shadow-xs space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Globe size={18} className="text-indigo-600" />
-                <h3 className="text-sm font-bold text-black/90">Original Parent Tool Generated Dataset</h3>
-              </div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded">
-                Active Source
-              </span>
-            </div>
-            <p className="text-xs text-black/60 leading-relaxed">
-              Linked to the primary SLR extraction and synthesis engine running at <code className="bg-black/5 px-1 py-0.5 rounded text-[11px]">https://ais-pre-l2q5w2kqjoythmfxhzacal-384167759363.asia-east1.run.app/vis</code>.
-            </p>
-            <div className="pt-1 flex flex-wrap items-center gap-3">
-              <button
-                onClick={onDirectRefresh}
-                disabled={isSyncing}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer shadow-xs"
-              >
-                <RefreshCw size={13} className={isSyncing ? "animate-spin" : ""} />
-                {isSyncing ? "Refreshing Dataset..." : "Refresh Data from Parent Tool"}
-              </button>
-              <a
-                href="https://ais-pre-l2q5w2kqjoythmfxhzacal-384167759363.asia-east1.run.app/vis"
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1 transition-colors"
-              >
-                <ExternalLink size={12} /> Open Parent Tool in AI Studio
-              </a>
-            </div>
-          </div>
-
-          {/* Source 2: Canonical GitHub Repository */}
-          <div className="p-5 rounded-2xl border border-black/10 bg-white shadow-xs space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Github size={18} className="text-black/70" />
-                <h3 className="text-sm font-bold text-black/90">Canonical Repository Archive (GitHub)</h3>
-              </div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded">
-                Synced Archive
-              </span>
-            </div>
-            <p className="text-xs text-black/60 leading-relaxed">
-              State archive stored in <code className="bg-black/5 px-1 py-0.5 rounded text-[11px]">analysis_state.json</code> in <a href="https://github.com/zetazetalun/Space-Architecture-Literature" target="_blank" rel="noreferrer" className="underline font-medium text-indigo-600 hover:text-indigo-800">zetazetalun/Space-Architecture-Literature</a>.
-            </p>
-            <div className="pt-1 flex items-center gap-3">
-              <button
-                onClick={onSyncGitHub}
-                disabled={isSyncing}
-                className="flex items-center gap-2 bg-black hover:bg-black/80 text-white px-4 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer shadow-xs"
-              >
-                <RefreshCw size={13} className={isSyncing ? "animate-spin" : ""} />
-                {isSyncing ? "Pulling Data..." : "Pull Latest from GitHub"}
-              </button>
-              <a
-                href="https://github.com/zetazetalun/Space-Architecture-Literature/blob/main/analysis_state.json"
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-black/50 hover:text-black flex items-center gap-1 transition-colors"
-              >
-                <ExternalLink size={12} /> View File on GitHub
-              </a>
-            </div>
-          </div>
-
-          {/* Source 3: Backup & File Import / Export */}
-          <div className="p-5 rounded-2xl border border-black/10 bg-white shadow-xs space-y-3">
-            <div className="flex items-center gap-2">
-              <Layers size={18} className="text-amber-600" />
-              <h3 className="text-sm font-bold text-black/90">Export & Import Options</h3>
-            </div>
-            <p className="text-xs text-black/60 leading-relaxed">
-              Export data for citation, manuscript compilation, or offline preservation.
-            </p>
-            <div className="flex flex-wrap items-center gap-3 pt-1">
-              <button
-                onClick={onExportExcel}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
-              >
-                <Download size={13} /> Export Excel (.xlsx)
-              </button>
-              <button
-                onClick={onExportJson}
-                className="flex items-center gap-1.5 px-3.5 py-2 bg-black/5 hover:bg-black/10 text-black/80 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
-              >
-                <Download size={13} /> Export JSON (.json)
-              </button>
-              <label className="flex items-center gap-1.5 px-3.5 py-2 bg-black/5 hover:bg-black/10 text-black/80 rounded-xl text-xs font-semibold transition-colors cursor-pointer">
-                <Upload size={13} /> Import JSON File
-                <input
-                  type="file"
-                  accept=".json"
-                  onChange={onImportJson}
-                  className="hidden"
-                />
-              </label>
-            </div>
-          </div>
-
-          {/* Snapshots history */}
-          {snapshots && snapshots.length > 0 && (
-            <div className="space-y-2 pt-2">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-black/50">Recent State Snapshots</h4>
-              <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
-                {snapshots.slice(0, 5).map(snap => (
-                  <div key={snap.id} className="p-2.5 bg-black/[0.02] border border-black/5 rounded-xl flex items-center justify-between text-xs">
-                    <div>
-                      <span className="font-semibold text-black/80">Snapshot #{snap.id}</span>
-                      <span className="text-black/40 ml-2">{new Date(snap.createdAt).toLocaleString()}</span>
-                      <span className="text-black/50 ml-2">({snap.paperCount} papers)</span>
-                    </div>
-                    <button
-                      onClick={() => onRestoreSnapshot(snap.id)}
-                      className="px-2.5 py-1 bg-white hover:bg-black hover:text-white border border-black/10 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer"
-                    >
-                      Restore
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 bg-black/[0.02] border-t border-black/5 flex items-center justify-between">
-          <span className="text-[11px] text-black/40">Multi Agent SLR for CMs in ETEs - DATA VIS</span>
-          <button
-            onClick={onClose}
-            className="px-5 py-2 bg-black hover:bg-black/80 text-white rounded-xl text-xs font-semibold transition-colors cursor-pointer"
-          >
-            Close
-          </button>
-        </div>
-      </motion.div>
-    </div>
-  );
-}

@@ -343,30 +343,29 @@ async function startServer() {
     }
   });
 
-  // Data Refresh: pulls canonical analysis dataset
-  app.post("/api/sync/refresh", async (req, res) => {
-    const parentAppUrl = "https://ais-pre-l2q5w2kqjoythmfxhzacal-384167759363.asia-east1.run.app/api/vis-state";
-    const githubFallbackUrl = "https://raw.githubusercontent.com/zetazetalun/Space-Architecture-Literature/main/analysis_state.json";
+  // Data Refresh: pulls latest canonical analysis dataset
+  app.post("/api/sync/refresh", async (_req, res) => {
+    const dataLiveUrl = process.env.DATA_LIVE_URL || "https://ais-pre-l2q5w2kqjoythmfxhzacal-384167759363.asia-east1.run.app/api/vis-state";
+    const dataArchiveUrl = process.env.DATA_ARCHIVE_URL || "https://raw.githubusercontent.com/zetazetalun/Space-Architecture-Literature/main/analysis_state.json";
     
-    // Quick test of parent tool
+    // 1. Try live source
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 1200);
-      const parentRes = await fetch(parentAppUrl, {
+      const liveRes = await fetch(dataLiveUrl, {
         headers: { 'Accept': 'application/json' },
         signal: controller.signal,
         redirect: 'manual'
       });
       clearTimeout(timeoutId);
 
-      const contentType = parentRes.headers.get('content-type') || '';
-      if (parentRes.ok && contentType.includes('application/json')) {
-        const data = await parentRes.json();
+      const contentType = liveRes.headers.get('content-type') || '';
+      if (liveRes.ok && contentType.includes('application/json')) {
+        const data = await liveRes.json();
         if (data && data.papers && Array.isArray(data.papers) && data.papers.length > 0) {
           populateStateIntoDatabase(data);
           return res.json({
             success: true,
-            source: 'parent_tool_live',
             papersCount: data.papers.length,
             mappingsCount: data.mappings ? data.mappings.length : 0,
             updatedAt: new Date().toISOString()
@@ -374,105 +373,30 @@ async function startServer() {
         }
       }
     } catch {
-      // Proceed directly to canonical archive
+      // Fallback to archive
     }
 
-    // Canonical published repository archive
+    // 2. Canonical published archive
     try {
-      const fetchRes = await fetch(githubFallbackUrl);
+      const fetchRes = await fetch(dataArchiveUrl);
       if (!fetchRes.ok) {
-        return res.status(fetchRes.status).json({ error: `Failed to refresh from parent source (HTTP ${fetchRes.status})` });
+        return res.status(fetchRes.status).json({ error: "Failed to load dataset from source" });
       }
       const data = await fetchRes.json();
       populateStateIntoDatabase(data);
       return res.json({
         success: true,
-        source: 'canonical_archive',
         papersCount: data.papers ? data.papers.length : 0,
         mappingsCount: data.mappings ? data.mappings.length : 0,
         updatedAt: new Date().toISOString()
       });
     } catch (err: any) {
       console.error("Error refreshing data:", err);
-      return res.status(500).json({ error: err.message || "Failed to refresh data" });
+      return res.status(500).json({ error: "Failed to refresh literature dataset" });
     }
   });
 
-  // Pull latest from GitHub
-  app.post("/api/sync/github", async (req, res) => {
-    try {
-      const repoUrl = req.body?.url || "https://raw.githubusercontent.com/zetazetalun/Space-Architecture-Literature/main/analysis_state.json";
-      const fetchRes = await fetch(repoUrl);
-      if (!fetchRes.ok) {
-        return res.status(fetchRes.status).json({ error: `GitHub fetch failed with status ${fetchRes.status}` });
-      }
-      const data = await fetchRes.json();
-      populateStateIntoDatabase(data);
-      res.json({
-        success: true,
-        papersCount: data.papers ? data.papers.length : 0,
-        mappingsCount: data.mappings ? data.mappings.length : 0,
-        updatedAt: new Date().toISOString()
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to sync with GitHub" });
-    }
-  });
 
-  // Sync with remote applet URL
-  app.post("/api/sync/remote-applet", async (req, res) => {
-    const { url, token } = req.body;
-    if (!url) return res.status(400).json({ error: "URL is required" });
-
-    try {
-      let targetUrl = url.trim().replace(/\/+$/, '');
-      if (targetUrl.endsWith('/vis')) {
-        targetUrl = targetUrl.replace(/\/vis$/, '/api/vis-state');
-      } else if (!targetUrl.endsWith('/api/vis-state')) {
-        targetUrl = `${targetUrl}/api/vis-state`;
-      }
-
-      const headers: Record<string, string> = { 'Accept': 'application/json' };
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const remoteRes = await fetch(targetUrl, { headers, redirect: 'manual' });
-
-      if (remoteRes.status >= 300 && remoteRes.status < 400) {
-        return res.json({
-          success: false,
-          isAuthProtected: true,
-          message: "The remote AI Studio preview environment requires Google session authentication. Please use 'Refresh Data from Parent Tool' or import your JSON export file."
-        });
-      }
-
-      if (!remoteRes.ok) {
-        return res.status(remoteRes.status).json({
-          success: false,
-          error: `Remote endpoint returned HTTP ${remoteRes.status}: ${remoteRes.statusText}`
-        });
-      }
-
-      const data = await remoteRes.json();
-      if (!data.papers || !data.summary) {
-        return res.json({
-          success: false,
-          error: "Remote applet returned no published analysis dataset."
-        });
-      }
-
-      populateStateIntoDatabase(data);
-      res.json({
-        success: true,
-        papersCount: data.papers.length,
-        mappingsCount: data.mappings ? data.mappings.length : 0,
-        updatedAt: new Date().toISOString()
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to fetch from remote URL" });
-    }
-  });
 
   // Import JSON file
   app.post("/api/sync/import-json", (req, res) => {
