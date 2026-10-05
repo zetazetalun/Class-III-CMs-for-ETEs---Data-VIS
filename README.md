@@ -11,8 +11,9 @@ An interactive, high-performance data visualization dashboard and scientific exp
 
 ## 🌐 Live Deployed Application
 
-- **Live Visualization (Production Preview)**: [https://ais-pre-yu7erqga22rpblk5wo73gb-384167759363.asia-east1.run.app](https://ais-pre-yu7erqga22rpblk5wo73gb-384167759363.asia-east1.run.app)
-- **Development Environment**: [https://ais-dev-yu7erqga22rpblk5wo73gb-384167759363.asia-east1.run.app](https://ais-dev-yu7erqga22rpblk5wo73gb-384167759363.asia-east1.run.app)
+- **Development Preview (Active Dev Instance)**: [https://ais-dev-yu7erqga22rpblk5wo73gb-384167759363.asia-east1.run.app](https://ais-dev-yu7erqga22rpblk5wo73gb-384167759363.asia-east1.run.app)
+- **Shared Visualization URL**: [https://ais-pre-yu7erqga22rpblk5wo73gb-384167759363.asia-east1.run.app](https://ais-pre-yu7erqga22rpblk5wo73gb-384167759363.asia-east1.run.app)
+  *(Note: The shared `ais-pre-...` URL is deployed automatically when clicking the **Share** button in the top-right of Google AI Studio).*
 
 ---
 
@@ -133,6 +134,33 @@ To start the production server:
 ```bash
 npm start
 ```
+
+---
+
+## 🚀 Deployment to Vercel
+
+The repository includes a ready-to-use [`vercel.json`](./vercel.json) configured for Vite with API rewrites.
+
+### Quick Deploy:
+1. **Push your code to GitHub**:
+   Ensure your latest commits are pushed to your GitHub repository:
+   ```bash
+   git add .
+   git commit -m "Configure Vercel deployment"
+   git push origin main
+   ```
+2. **Import into Vercel**:
+   - Go to [vercel.com/new](https://vercel.com/new) and log in.
+   - Select your GitHub repository (`SRL-on-Space-Architecture`).
+3. **Configure Project Settings**:
+   - **Framework Preset**: `Vite`
+   - **Build Command**: `npm run build`
+   - **Output Directory**: `dist`
+   - **Install Command**: `npm install`
+4. **Environment Variables**:
+   - Add `GEMINI_API_KEY`: *(Your Google AI Studio Gemini API key for Chatbox Q&A)*.
+5. **Click "Deploy"**:
+   - Vercel will build the frontend into `dist/` and route client paths and `/api/*` requests automatically.
 
 ---
 

@@ -126,6 +126,23 @@ export interface ChatMessage {
   };
 }
 
+export interface PaperContribution {
+  id: number;
+  createdAt: string;
+  authors: string;
+  contact: string;
+  doi: string;
+  title?: string;
+  notes?: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  githubSynced: boolean;
+  commitUrl?: string;
+  githubUrl?: string;
+  githubFolder?: string;
+}
+
 declare global {
   interface Window {
     aistudio?: {

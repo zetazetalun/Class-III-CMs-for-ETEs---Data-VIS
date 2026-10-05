@@ -16,7 +16,8 @@ import {
   Copy,
   ExternalLink,
   Layers,
-  Share2
+  Share2,
+  UploadCloud
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ResearchParameter, Paper, MappingResult, ReviewSummary, ChatMessage } from './types';
@@ -24,6 +25,7 @@ import { chatWithReview } from './services/gemini';
 import { getDynamicCounts, getDynamicHeatmap, normalizeValue, getPaperParameterValue } from './lib/normalize';
 import InteractiveChartBuilder from './components/InteractiveChartBuilder';
 import KnowledgeGraph from './components/KnowledgeGraph';
+import { ContributionSection } from './components/ContributionSection';
 import { 
   BarChart, 
   Bar, 
@@ -148,7 +150,7 @@ const DEFAULT_PARAMETERS: ResearchParameter[] = [
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'analysis' | 'interactive' | 'graph' | 'source' | 'chat'>('analysis');
+  const [activeTab, setActiveTab] = useState<'analysis' | 'interactive' | 'graph' | 'source' | 'chat' | 'contribute'>('analysis');
   const [parameters] = useState<ResearchParameter[]>(DEFAULT_PARAMETERS);
   
   const [papersState, setPapersState] = useState<Paper[]>([]);
@@ -527,6 +529,12 @@ export default function App() {
           onClick={() => setActiveTab('chat')} 
           icon={<MessageSquare size={20} />} 
           label="Chatbox" 
+        />
+        <NavButton 
+          active={activeTab === 'contribute'} 
+          onClick={() => setActiveTab('contribute')} 
+          icon={<UploadCloud size={20} />} 
+          label="Contribute" 
         />
 
         <div className="mt-auto pb-4 flex flex-col items-center gap-3">
@@ -1118,6 +1126,17 @@ export default function App() {
                       </div>
                     </div>
                   </section>
+                </motion.div>
+              )}
+
+              {activeTab === 'contribute' && (
+                <motion.div 
+                  key="contribute"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                >
+                  <ContributionSection onPaperContributed={() => fetchVisualizationState(false)} />
                 </motion.div>
               )}
             </AnimatePresence>

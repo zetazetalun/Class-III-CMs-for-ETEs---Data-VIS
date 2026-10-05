@@ -5,15 +5,148 @@ import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "fs";
 import fs from "fs/promises";
 import dotenv from "dotenv";
-import { serverChatWithReview } from "./server/geminiService";
+import { GoogleGenAI } from "@google/genai";
+import { Octokit } from "@octokit/rest";
 
 dotenv.config();
+
+function getGeminiClient(customApiKey?: string) {
+  const apiKey = customApiKey || process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY environment variable is missing on server.");
+  }
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      }
+    }
+  });
+}
+
+async function executeWithModelFallback<T>(
+  preferredModel: string,
+  fn: (model: string) => Promise<T>
+): Promise<T> {
+  const normalized = preferredModel === 'gemini-3-flash-preview' ? 'gemini-flash-latest' : (preferredModel || 'gemini-flash-latest');
+  const modelsToTry = [
+    normalized,
+    'gemini-3.1-flash-lite',
+    'gemini-flash-lite-latest',
+    'gemini-3.5-flash-lite',
+    'gemini-3.5-flash',
+    'gemini-flash-latest',
+    'gemini-3.6-flash',
+    'gemini-3.8-flash',
+    'gemini-pro-latest'
+  ].filter((m, i, arr) => m && arr.indexOf(m) === i);
+
+  let lastError: any = null;
+  for (let i = 0; i < modelsToTry.length; i++) {
+    const model = modelsToTry[i];
+    try {
+      return await fn(model);
+    } catch (err: any) {
+      lastError = err;
+      const msg = (err?.message || '').toLowerCase();
+      const isRetryable =
+        msg.includes('503') ||
+        msg.includes('unavailable') ||
+        msg.includes('high demand') ||
+        msg.includes('429') ||
+        msg.includes('rate limit');
+
+      if (!isRetryable) {
+        throw err;
+      }
+      if (i < modelsToTry.length - 1) {
+        await new Promise(r => setTimeout(r, 600));
+      }
+    }
+  }
+  throw lastError;
+}
+
+async function serverChatWithReview(
+  question: string,
+  context: {
+    papers: any[];
+    mappings: any[];
+    summary: any;
+  },
+  requestedModel: string = 'gemini-flash-latest',
+  customApiKey?: string
+) {
+  const ai = getGeminiClient(customApiKey);
+
+  const relevantPapers = (context.papers || []).filter(p => p.isRelevant !== false && p.status !== 'failed');
+
+  const compactPaperLookup = relevantPapers.map(p => {
+    const paperMappings = (context.mappings || [])
+      .filter(m => m.paperId === p.id)
+      .map(m => {
+        const valStr = Array.isArray(m.value) ? m.value.join(', ') : String(m.value || '');
+        return `${m.parameterId}: ${valStr}`;
+      });
+
+    return {
+      title: p.title,
+      doi: p.doi || 'N/A',
+      keyFindings: typeof p.keyFindings === 'string' ? p.keyFindings.slice(0, 200) : '',
+      parameters: paperMappings
+    };
+  });
+
+  const systemInstruction = `
+You are an expert scientific research assistant for a Systematic Literature Review on Construction Methods in Extraterrestrial Environments.
+Your role is to answer questions strictly grounded in the synthesized review findings and the mapped paper database.
+
+Academic Citation Guidelines:
+1. Whenever you reference findings, concepts, or statistics, explicitly cite the relevant paper in this exact format:
+   "[Paper Title] (DOI: [DOI Number])"
+   If DOI is not available, cite as "[Paper Title]".
+2. Only make claims that are supported by the provided knowledge base context.
+3. Be direct, authoritative, and scientifically rigorous.
+  `;
+
+  const contextMessage = `
+Literature Review Context:
+- Overview: ${context.summary?.overview || 'N/A'}
+- Synthesis Key Findings: ${context.summary?.keyFindings || 'N/A'}
+- Methodology Trends: ${context.summary?.methodologyTrends || 'N/A'}
+- Class III Habitat Technology: ${context.summary?.technologyClass3 || 'N/A'}
+
+Analyzed Papers & Mappings (${relevantPapers.length} papers):
+${JSON.stringify(compactPaperLookup, null, 2)}
+
+User Question: ${question}
+  `;
+
+  const runCall = async (modelToUse: string) => {
+    return await ai.models.generateContent({
+      model: modelToUse,
+      contents: contextMessage,
+      config: {
+        systemInstruction
+      }
+    });
+  };
+
+  const response = await executeWithModelFallback(requestedModel, runCall);
+
+  return {
+    role: 'assistant' as const,
+    content: response.text || "No response generated."
+  };
+}
 
 async function startServer() {
   const portArgIndex = process.argv.indexOf('--port');
   const cliPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? Number(process.argv[portArgIndex + 1]) : NaN;
-  // Always default to port 3000 as required by the AI Studio environment
-  const PORT = !isNaN(cliPort) && cliPort > 0 ? cliPort : 3000;
+  const envPort = process.env.PORT ? Number(process.env.PORT) : NaN;
+  // Use CLI port if passed, else environment port (Cloud Run sets PORT), else default to 3000
+  const PORT = !isNaN(cliPort) && cliPort > 0 ? cliPort : (!isNaN(envPort) && envPort > 0 ? envPort : 3000);
 
   console.log(`Starting server on port ${PORT}. NODE_ENV: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Working directory: ${process.cwd()}`);
@@ -110,7 +243,35 @@ async function startServer() {
       country_name TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS contributions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      authors TEXT NOT NULL,
+      contact TEXT NOT NULL,
+      doi TEXT NOT NULL,
+      title TEXT,
+      notes TEXT,
+      file_name TEXT NOT NULL,
+      file_size INTEGER NOT NULL,
+      file_type TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      github_synced INTEGER DEFAULT 0,
+      github_url TEXT,
+      commit_url TEXT,
+      github_folder TEXT
+    );
   `);
+
+  try {
+    db.exec("ALTER TABLE contributions ADD COLUMN commit_url TEXT");
+  } catch (_) {}
+
+  // Ensure Contributions directory exists in workspace root
+  const contributionsDir = path.join(process.cwd(), "Contributions");
+  if (!existsSync(contributionsDir)) {
+    mkdirSync(contributionsDir, { recursive: true });
+  }
 
   // Helper function to populate full analysis state into SQLite
   function populateStateIntoDatabase(data: any): boolean {
@@ -525,6 +686,326 @@ async function startServer() {
     } catch (error: any) {
       console.error("[POST /api/gemini/chat] Error:", error);
       res.status(500).json({ error: error.message || "Failed to chat with review" });
+    }
+  });
+
+  // CrossRef DOI Resolution Endpoint
+  app.get("/api/doi/resolve", async (req, res) => {
+    try {
+      const rawDoi = req.query.doi as string;
+      if (!rawDoi || !rawDoi.trim()) {
+        return res.status(400).json({ error: "DOI query parameter is required." });
+      }
+
+      // Normalize DOI: strip https://doi.org/, dx.doi.org, doi:
+      const cleanDoi = rawDoi.replace(/^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:)/i, '').trim();
+
+      const crossRefUrl = `https://api.crossref.org/works/${encodeURIComponent(cleanDoi)}`;
+      const response = await fetch(crossRefUrl, {
+        headers: {
+          'User-Agent': 'SLR-Space-Architecture-Review/1.0 (mailto:zhelunzhu@gmail.com; https://github.com/zetazetalun)'
+        }
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          return res.status(404).json({ error: "DOI not found in CrossRef database. Please verify the DOI string." });
+        }
+        return res.status(response.status).json({ error: `CrossRef returned HTTP status ${response.status}.` });
+      }
+
+      const data: any = await response.json();
+      const message = data.message;
+      if (!message) {
+        return res.status(404).json({ error: "No metadata returned from CrossRef." });
+      }
+
+      // Format title
+      const title = message.title?.[0] || "";
+
+      // Format authors
+      const authors = (message.author || []).map((a: any) => {
+        const fullName = [a.given, a.family].filter(Boolean).join(' ') || a.name || 'Author';
+        const aff = a.affiliation?.[0]?.name ? ` (${a.affiliation[0].name})` : '';
+        return `${fullName}${aff}`;
+      }).join(', ');
+
+      // Format publication year
+      const dateParts = message['published-print']?.['date-parts']?.[0] 
+        || message['published-online']?.['date-parts']?.[0] 
+        || message['created']?.['date-parts']?.[0];
+      const year = dateParts?.[0] ? String(dateParts[0]) : '';
+
+      // Format journal / publisher
+      const journal = message['container-title']?.[0] || message.publisher || '';
+
+      // Format abstract if available
+      let abstract = message.abstract || '';
+      if (abstract) {
+        abstract = abstract.replace(/<[^>]+>/g, '').trim();
+      }
+
+      res.json({
+        success: true,
+        doi: cleanDoi,
+        title,
+        authors,
+        year,
+        journal,
+        abstract,
+        publisher: message.publisher || '',
+        url: message.URL || `https://doi.org/${cleanDoi}`
+      });
+    } catch (err: any) {
+      console.error("[GET /api/doi/resolve] Error:", err);
+      res.status(500).json({ error: err.message || "Failed to resolve DOI." });
+    }
+  });
+
+  // Paper Contribution Submission Endpoint
+  app.post("/api/contributions", async (req, res) => {
+    try {
+      const { authors, contact, doi, title, notes, fileName, fileType, fileBase64 } = req.body;
+
+      // Mandatory fields validation
+      if (!authors || typeof authors !== 'string' || !authors.trim()) {
+        return res.status(400).json({ error: "Author(s) information is mandatory." });
+      }
+      if (!contact || typeof contact !== 'string' || !contact.trim()) {
+        return res.status(400).json({ error: "Contact information is mandatory." });
+      }
+      if (!doi || typeof doi !== 'string' || !doi.trim()) {
+        return res.status(400).json({ error: "DOI (Digital Object Identifier) is mandatory." });
+      }
+      if (!fileName || !fileBase64) {
+        return res.status(400).json({ error: "Paper manuscript file upload is mandatory." });
+      }
+
+      // Check allowed extensions
+      const lowerName = fileName.toLowerCase();
+      const allowed = ['.pdf', '.doc', '.docx', '.md', '.markdown'];
+      if (!allowed.some(ext => lowerName.endsWith(ext))) {
+        return res.status(400).json({ error: "Unsupported file type. Please upload a PDF (.pdf), Word (.doc, .docx), or Markdown (.md) file." });
+      }
+
+      // Build target directory inside Contributions/
+      const now = new Date();
+      const timestamp = now.toISOString().replace(/[-:T.]/g, '').slice(0, 14);
+      const safeAuthor = authors.trim().slice(0, 25).replace(/[^a-zA-Z0-9]/g, '_');
+      const safeTitle = (title || fileName).trim().slice(0, 30).replace(/[^a-zA-Z0-9]/g, '_');
+      const folderName = `${timestamp}_${safeAuthor}_${safeTitle}`;
+      const targetLocalDir = path.join(contributionsDir, folderName);
+
+      if (!existsSync(targetLocalDir)) {
+        mkdirSync(targetLocalDir, { recursive: true });
+      }
+
+      // Decode and save file locally
+      const sanitizedFileName = path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const targetFilePath = path.join(targetLocalDir, sanitizedFileName);
+      const fileBuffer = Buffer.from(fileBase64, 'base64');
+      await fs.writeFile(targetFilePath, fileBuffer);
+
+      // Write metadata.json
+      const metadata = {
+        title: title ? title.trim() : sanitizedFileName,
+        authors: authors.trim(),
+        contact: contact.trim(),
+        doi: doi.trim(),
+        notes: notes ? notes.trim() : "",
+        submittedAt: now.toISOString(),
+        fileName: sanitizedFileName,
+        fileSize: fileBuffer.length,
+        fileType: fileType || 'application/octet-stream',
+      };
+      await fs.writeFile(path.join(targetLocalDir, 'metadata.json'), JSON.stringify(metadata, null, 2), 'utf-8');
+
+      // Write README.md inside the folder for GitHub browsing
+      const readmeContent = `# Literature Review Contribution: ${metadata.title}
+
+- **Author(s)**: ${metadata.authors}
+- **Contact**: ${metadata.contact}
+- **DOI**: [${metadata.doi}](https://doi.org/${encodeURIComponent(metadata.doi)})
+- **Submitted At**: ${metadata.submittedAt}
+- **Manuscript File**: [${sanitizedFileName}](./${encodeURIComponent(sanitizedFileName)}) (${(fileBuffer.length / 1024).toFixed(1)} KB)
+
+${metadata.notes ? `### Relevance & Research Notes\n${metadata.notes}\n` : ''}
+---
+*Submitted via Systematic Literature Review for Construction Methods in Extraterrestrial Environments (ETEs).*
+`;
+      await fs.writeFile(path.join(targetLocalDir, 'README.md'), readmeContent, 'utf-8');
+
+      // Record in SQLite
+      const insertStmt = db.prepare(`
+        INSERT INTO contributions (authors, contact, doi, title, notes, file_name, file_size, file_type, file_path, github_synced, github_url, github_folder)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
+      `);
+      const info = insertStmt.run(
+        metadata.authors,
+        metadata.contact,
+        metadata.doi,
+        metadata.title,
+        metadata.notes,
+        sanitizedFileName,
+        fileBuffer.length,
+        fileType || 'application/octet-stream',
+        targetFilePath,
+        folderName
+      );
+      const contributionId = info.lastInsertRowid;
+
+      // GitHub Atomic Git Tree Commit if token available
+      const githubToken = process.env.GITHUB_TOKEN;
+      const repoFullName = process.env.GITHUB_REPO || 'zetazetalun/SRL-on-Space-Architecture';
+      const [owner, repo] = repoFullName.split('/');
+      let githubSynced = false;
+      let githubUrl: string | undefined = undefined;
+      let commitUrl: string | undefined = undefined;
+
+      if (githubToken && owner && repo) {
+        try {
+          const octokit = new Octokit({ auth: githubToken });
+          let branch = 'main';
+          try {
+            const repoRes = await octokit.rest.repos.get({ owner, repo });
+            if (repoRes.data.default_branch) branch = repoRes.data.default_branch;
+          } catch (_) {}
+
+          // 1. Get latest commit and base tree of branch
+          const refRes = await octokit.rest.git.getRef({
+            owner,
+            repo,
+            ref: `heads/${branch}`
+          });
+          const latestCommitSha = refRes.data.object.sha;
+
+          const commitRes = await octokit.rest.git.getCommit({
+            owner,
+            repo,
+            commit_sha: latestCommitSha
+          });
+          const baseTreeSha = commitRes.data.tree.sha;
+
+          // 2. Create Blob for binary manuscript file
+          const blobRes = await octokit.rest.git.createBlob({
+            owner,
+            repo,
+            content: fileBuffer.toString('base64'),
+            encoding: 'base64'
+          });
+          const fileBlobSha = blobRes.data.sha;
+
+          // 3. Create Atomic Git Tree with all files in one single operation
+          const treeRes = await octokit.rest.git.createTree({
+            owner,
+            repo,
+            base_tree: baseTreeSha,
+            tree: [
+              {
+                path: `Contributions/${folderName}/${sanitizedFileName}`,
+                mode: '100644',
+                type: 'blob',
+                sha: fileBlobSha
+              },
+              {
+                path: `Contributions/${folderName}/metadata.json`,
+                mode: '100644',
+                type: 'blob',
+                content: JSON.stringify(metadata, null, 2)
+              },
+              {
+                path: `Contributions/${folderName}/README.md`,
+                mode: '100644',
+                type: 'blob',
+                content: readmeContent
+              }
+            ]
+          });
+          const newTreeSha = treeRes.data.sha;
+
+          // 4. Create single Atomic Commit referencing the tree
+          const commitMessage = `Add literature contribution: ${metadata.title} by ${metadata.authors} [DOI: ${metadata.doi}]`;
+          const newCommitRes = await octokit.rest.git.createCommit({
+            owner,
+            repo,
+            message: commitMessage,
+            tree: newTreeSha,
+            parents: [latestCommitSha]
+          });
+          const newCommitSha = newCommitRes.data.sha;
+
+          // 5. Update branch reference atomically
+          await octokit.rest.git.updateRef({
+            owner,
+            repo,
+            ref: `heads/${branch}`,
+            sha: newCommitSha
+          });
+
+          githubSynced = true;
+          commitUrl = `https://github.com/${owner}/${repo}/commit/${newCommitSha}`;
+          githubUrl = `https://github.com/${owner}/${repo}/tree/${branch}/Contributions/${folderName}`;
+
+          db.prepare(`
+            UPDATE contributions SET github_synced = 1, github_url = ?, commit_url = ? WHERE id = ?
+          `).run(githubUrl, commitUrl, contributionId);
+        } catch (ghErr: any) {
+          console.error('[GitHub Atomic Tree Push Warning]:', ghErr.message);
+        }
+      }
+
+      res.json({
+        success: true,
+        id: contributionId,
+        githubSynced,
+        commitUrl,
+        githubUrl: githubUrl || `https://github.com/${owner || 'zetazetalun'}/${repo || 'SRL-on-Space-Architecture'}/tree/main/Contributions`,
+        message: githubSynced
+          ? 'Paper contribution successfully committed to GitHub repository as an atomic transaction in Contributions folder!'
+          : 'Paper contribution saved locally in the Contributions repository folder. (Note: configure GITHUB_TOKEN on server for automatic remote commit push).'
+      });
+    } catch (err: any) {
+      console.error('[POST /api/contributions] Error:', err);
+      res.status(500).json({ error: err.message || 'Failed to process contribution.' });
+    }
+  });
+
+  // Get all contributions
+  app.get("/api/contributions", (_req, res) => {
+    try {
+      const rows = db.prepare(`SELECT * FROM contributions ORDER BY id DESC`).all();
+      const contributions = rows.map((r: any) => ({
+        id: r.id,
+        createdAt: r.created_at,
+        authors: r.authors,
+        contact: r.contact,
+        doi: r.doi,
+        title: r.title,
+        notes: r.notes,
+        fileName: r.file_name,
+        fileSize: r.file_size,
+        fileType: r.file_type,
+        githubSynced: Boolean(r.github_synced),
+        commitUrl: r.commit_url,
+        githubUrl: r.github_url,
+        githubFolder: r.github_folder
+      }));
+      res.json({ success: true, contributions });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Download contribution manuscript file
+  app.get("/api/contributions/:id/download", (req, res) => {
+    try {
+      const row: any = db.prepare(`SELECT * FROM contributions WHERE id = ?`).get(req.params.id);
+      if (!row || !row.file_path || !existsSync(row.file_path)) {
+        return res.status(404).send("Contribution file not found.");
+      }
+      res.download(row.file_path, row.file_name);
+    } catch (err: any) {
+      res.status(500).send("Error reading contribution file: " + err.message);
     }
   });
 
