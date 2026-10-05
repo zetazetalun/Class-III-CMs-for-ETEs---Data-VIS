@@ -137,6 +137,7 @@ export interface PaperContribution {
   fileName: string;
   fileSize: number;
   fileType: string;
+  filePath?: string;
   githubSynced: boolean;
   commitUrl?: string;
   githubUrl?: string;

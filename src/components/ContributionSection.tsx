@@ -17,7 +17,12 @@ import {
   Info,
   Sparkles,
   GitCommit,
-  Check
+  Check,
+  Bot,
+  Copy,
+  ArrowUpRight,
+  ShieldCheck,
+  Server
 } from 'lucide-react';
 import { PaperContribution } from '../types';
 
@@ -25,7 +30,14 @@ interface ContributionSectionProps {
   onPaperContributed?: () => void;
 }
 
+const REPO_OWNER = 'zetazetalun';
+const REPO_NAME = 'SRL-on-Space-Architecture';
+const REPO_FULL = `${REPO_OWNER}/${REPO_NAME}`;
+
 export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPaperContributed }) => {
+  // Submission mode: 'github-actions' (Zero External Servers) vs 'server-api' (Node.js Express)
+  const [submissionMode, setSubmissionMode] = useState<'github-actions' | 'server-api'>('github-actions');
+
   // Form fields
   const [doi, setDoi] = useState('');
   const [authors, setAuthors] = useState('');
@@ -38,30 +50,36 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
   const [doiResolveError, setDoiResolveError] = useState<string | null>(null);
   const [doiResolvedData, setDoiResolvedData] = useState<{
     doi: string;
-    title: string;
-    authors: string;
-    year?: string;
+    title?: string;
+    authors?: string;
     journal?: string;
-    abstract?: string;
+    year?: string;
     publisher?: string;
+    abstract?: string;
   } | null>(null);
   const [autoFilledFields, setAutoFilledFields] = useState<{ [key: string]: boolean }>({});
 
   // File upload state
   const [file, setFile] = useState<File | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Submission state
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Form validation & submission state
   const [formErrors, setFormErrors] = useState<{ [key: string]: string }>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [copiedPayload, setCopiedPayload] = useState(false);
+  const [showIssueModal, setShowIssueModal] = useState(false);
+  const [generatedIssueUrl, setGeneratedIssueUrl] = useState('');
+  const [generatedIssueBody, setGeneratedIssueBody] = useState('');
+
   const [submitResult, setSubmitResult] = useState<{
     success: boolean;
     message: string;
     githubSynced?: boolean;
     commitUrl?: string;
     githubUrl?: string;
+    mode?: 'github-actions' | 'server-api';
   } | null>(null);
 
   // Contributions history
@@ -70,28 +88,58 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
 
   const allowedExtensions = ['.pdf', '.doc', '.docx', '.md', '.markdown'];
 
+  const loadLocalContributions = (): PaperContribution[] => {
+    try {
+      const stored = localStorage.getItem('srl_paper_contributions');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const saveLocalContribution = (item: PaperContribution) => {
+    try {
+      const existing = loadLocalContributions();
+      const updated = [item, ...existing.filter(x => x.id !== item.id)];
+      localStorage.setItem('srl_paper_contributions', JSON.stringify(updated.slice(0, 50)));
+      return updated;
+    } catch {
+      return [item];
+    }
+  };
+
   const fetchContributions = async () => {
     setLoadingHistory(true);
+    let serverList: PaperContribution[] = [];
     try {
       const res = await fetch('/api/contributions');
       if (res.ok) {
         const data = await res.json();
         if (data.contributions) {
-          setContributions(data.contributions);
+          serverList = data.contributions;
         }
       }
     } catch (err) {
-      console.error('Failed to load contributions:', err);
-    } finally {
-      setLoadingHistory(false);
+      // In static mode or offline, /api/contributions won't respond
     }
+
+    // Merge with local submissions
+    const localList = loadLocalContributions();
+    const map = new Map<string | number, PaperContribution>();
+    serverList.forEach(item => map.set(item.id, item));
+    localList.forEach(item => {
+      if (!map.has(item.id)) map.set(item.id, item);
+    });
+
+    setContributions(Array.from(map.values()));
+    setLoadingHistory(false);
   };
 
   useEffect(() => {
     fetchContributions();
   }, []);
 
-  // Automatic DOI Resolution via CrossRef API
+  // Automatic DOI Resolution: Works both via backend API or directly client-side via CrossRef CORS
   const handleResolveDoi = async () => {
     if (!doi.trim()) {
       setDoiResolveError('Please enter a DOI or DOI URL first.');
@@ -101,64 +149,121 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
     setIsResolvingDoi(true);
     setDoiResolveError(null);
 
+    const cleanDoi = doi.trim().replace(/^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:)/i, '').trim();
+
+    let resolvedData: any = null;
+
+    // 1. Try server-side endpoint first
     try {
-      const res = await fetch(`/api/doi/resolve?doi=${encodeURIComponent(doi.trim())}`);
-      const data = await res.json();
-
-      if (res.ok && data.success) {
-        setDoiResolvedData(data);
-        if (data.doi) setDoi(data.doi);
-        if (data.title) {
-          setTitle(data.title);
-          setAutoFilledFields(prev => ({ ...prev, title: true }));
+      const res = await fetch(`/api/doi/resolve?doi=${encodeURIComponent(cleanDoi)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          resolvedData = data;
         }
-        if (data.authors) {
-          setAuthors(data.authors);
-          setAutoFilledFields(prev => ({ ...prev, authors: true }));
-        }
-
-        // Suggest structured context into notes if empty
-        let suggestedNotes = '';
-        if (data.journal) suggestedNotes += `Published in: ${data.journal}`;
-        if (data.year) suggestedNotes += ` (${data.year})\n`;
-        if (data.publisher) suggestedNotes += `Publisher: ${data.publisher}\n`;
-        if (data.abstract) suggestedNotes += `\nAbstract:\n${data.abstract}`;
-
-        if (suggestedNotes && !notes.trim()) {
-          setNotes(suggestedNotes);
-          setAutoFilledFields(prev => ({ ...prev, notes: true }));
-        }
-
-        // Clear error indicators on resolved fields
-        setFormErrors(prev => {
-          const updated = { ...prev };
-          delete updated.doi;
-          delete updated.authors;
-          return updated;
-        });
-      } else {
-        setDoiResolveError(data.error || 'Could not find DOI in CrossRef database. You can still fill fields manually.');
       }
-    } catch (err: any) {
-      setDoiResolveError(err.message || 'Network error fetching DOI metadata from CrossRef.');
-    } finally {
-      setIsResolvingDoi(false);
+    } catch {
+      // Server not reachable (static mode), fallback to client-side CrossRef API
     }
+
+    // 2. Direct client-side CrossRef call (Supports CORS for 100% static mode)
+    if (!resolvedData) {
+      try {
+        const crossRefUrl = `https://api.crossref.org/works/${encodeURIComponent(cleanDoi)}`;
+        const crRes = await fetch(crossRefUrl, {
+          headers: {
+            'Accept': 'application/json'
+          }
+        });
+
+        if (crRes.ok) {
+          const crJson = await crRes.json();
+          const message = crJson.message;
+          if (message) {
+            const parsedTitle = message.title?.[0] || '';
+            const parsedAuthors = (message.author || []).map((a: any) => {
+              const fullName = [a.given, a.family].filter(Boolean).join(' ') || a.name || 'Author';
+              const aff = a.affiliation?.[0]?.name ? ` (${a.affiliation[0].name})` : '';
+              return `${fullName}${aff}`;
+            }).join(', ');
+
+            const dateParts = message['published-print']?.['date-parts']?.[0] 
+              || message['published-online']?.['date-parts']?.[0] 
+              || message['created']?.['date-parts']?.[0];
+            const parsedYear = dateParts?.[0] ? String(dateParts[0]) : '';
+            const parsedJournal = message['container-title']?.[0] || message.publisher || '';
+            const parsedAbstract = message.abstract ? message.abstract.replace(/<[^>]+>/g, '').trim() : '';
+
+            resolvedData = {
+              success: true,
+              doi: cleanDoi,
+              title: parsedTitle,
+              authors: parsedAuthors,
+              journal: parsedJournal,
+              year: parsedYear,
+              publisher: message.publisher || '',
+              abstract: parsedAbstract
+            };
+          }
+        } else if (crRes.status === 404) {
+          setDoiResolveError('DOI not found in CrossRef database. You can still fill fields manually.');
+        }
+      } catch (err: any) {
+        setDoiResolveError(err.message || 'Network error fetching DOI metadata from CrossRef.');
+      }
+    }
+
+    if (resolvedData && resolvedData.success) {
+      setDoiResolvedData(resolvedData);
+      if (resolvedData.doi) setDoi(resolvedData.doi);
+      if (resolvedData.title) {
+        setTitle(resolvedData.title);
+        setAutoFilledFields(prev => ({ ...prev, title: true }));
+      }
+      if (resolvedData.authors) {
+        setAuthors(resolvedData.authors);
+        setAutoFilledFields(prev => ({ ...prev, authors: true }));
+      }
+
+      // Suggest structured context into notes if empty
+      let suggestedNotes = '';
+      if (resolvedData.journal) suggestedNotes += `Published in: ${resolvedData.journal}`;
+      if (resolvedData.year) suggestedNotes += ` (${resolvedData.year})\n`;
+      if (resolvedData.publisher) suggestedNotes += `Publisher: ${resolvedData.publisher}\n`;
+      if (resolvedData.abstract) suggestedNotes += `\nAbstract:\n${resolvedData.abstract}`;
+
+      if (suggestedNotes && !notes.trim()) {
+        setNotes(suggestedNotes);
+        setAutoFilledFields(prev => ({ ...prev, notes: true }));
+      }
+
+      // Clear error indicators on resolved fields
+      setFormErrors(prev => {
+        const updated = { ...prev };
+        delete updated.doi;
+        delete updated.authors;
+        return updated;
+      });
+    } else if (!doiResolveError) {
+      setDoiResolveError('Could not auto-fill metadata from CrossRef. You can still submit details manually.');
+    }
+
+    setIsResolvingDoi(false);
   };
 
   const validateFile = (selectedFile: File): boolean => {
     setFileError(null);
-    const fileName = selectedFile.name.toLowerCase();
-    const isAllowed = allowedExtensions.some(ext => fileName.endsWith(ext));
-
-    if (!isAllowed) {
-      setFileError('Invalid file type. Please upload a PDF (.pdf), Word Document (.doc, .docx), or Markdown (.md).');
+    const ext = '.' + selectedFile.name.split('.').pop()?.toLowerCase();
+    
+    if (!allowedExtensions.includes(ext)) {
+      setFileError(`Invalid file format "${ext}". Supported: PDF (.pdf), Word (.doc, .docx), Markdown (.md).`);
       return false;
     }
 
-    // 50 MB limit
-    if (selectedFile.size > 50 * 1024 * 1024) {
-      setFileError('File exceeds 50MB limit.');
+    // Max 50MB
+    const maxSize = 50 * 1024 * 1024;
+    if (selectedFile.size > maxSize) {
+      setFileError('File size exceeds 50MB limit. Please upload a compressed or standard manuscript.');
       return false;
     }
 
@@ -231,6 +336,55 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
     });
   };
 
+  // Build structured issue body for GitHub Actions automation
+  const buildIssueMarkdown = (fileBase64?: string): string => {
+    const cleanDoi = doi.trim().replace(/^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:)/i, '').trim();
+    const paperTitle = title.trim() || (file ? file.name : 'Manuscript Submission');
+
+    const metadataPayload = {
+      authors: authors.trim(),
+      contact: contact.trim(),
+      doi: cleanDoi,
+      title: paperTitle,
+      notes: notes.trim(),
+      fileName: file ? file.name : 'manuscript.pdf',
+      fileSize: file ? file.size : 0,
+      fileType: file ? file.type : 'application/pdf',
+      submittedAt: new Date().toISOString(),
+      ...(fileBase64 && file && file.size < 500000 ? { fileBase64 } : {})
+    };
+
+    return `## 📄 Systematic Literature Review Paper Contribution
+
+### Author(s)
+${authors.trim()}
+
+### Contact
+${contact.trim()}
+
+### DOI
+${cleanDoi}
+
+### Paper Title
+${paperTitle}
+
+### Manuscript File
+${file ? `**${file.name}** (${(file.size / 1024).toFixed(1)} KB)` : 'Attached manuscript'}
+
+### Notes / Abstract
+${notes.trim() || '*No additional notes provided.*'}
+
+---
+### 📎 Manuscript Attachment Instructions
+Please drag and drop your paper file (**${file ? file.name : 'PDF/Word'}**) into this issue box below so it is attached directly to GitHub!
+
+<!-- CONTRIBUTION_METADATA_START -->
+${JSON.stringify(metadataPayload, null, 2)}
+<!-- CONTRIBUTION_METADATA_END -->
+`;
+  };
+
+  // Form Submit Handler
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateForm() || !file) return;
@@ -238,6 +392,72 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
     setIsSubmitting(true);
     setSubmitResult(null);
 
+    // ==========================================
+    // ROUTE 1: Zero-Server GitHub Actions Mode
+    // ==========================================
+    if (submissionMode === 'github-actions') {
+      try {
+        let base64Data = '';
+        if (file.size < 500000) {
+          try {
+            base64Data = await fileToBase64(file);
+          } catch {
+            // ignore
+          }
+        }
+
+        const issueBody = buildIssueMarkdown(base64Data);
+        const cleanTitle = title.trim() || file.name;
+        const issueTitle = `[Contribution]: ${cleanTitle}`;
+        
+        // Encode URL for GitHub New Issue
+        const encodedTitle = encodeURIComponent(issueTitle);
+        const encodedBody = encodeURIComponent(issueBody);
+        const encodedLabels = encodeURIComponent('contribution');
+        const issueUrl = `https://github.com/${REPO_FULL}/issues/new?title=${encodedTitle}&labels=${encodedLabels}&body=${encodedBody}`;
+
+        setGeneratedIssueUrl(issueUrl);
+        setGeneratedIssueBody(issueBody);
+        setShowIssueModal(true);
+
+        // Record in local cache
+        const localRecord: PaperContribution = {
+          id: Date.now(),
+          authors: authors.trim(),
+          contact: contact.trim(),
+          doi: doi.trim(),
+          title: cleanTitle,
+          notes: notes.trim(),
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type || 'application/pdf',
+          filePath: '',
+          githubSynced: false,
+          githubUrl: `https://github.com/${REPO_FULL}/issues`,
+          createdAt: new Date().toISOString()
+        };
+        saveLocalContribution(localRecord);
+        fetchContributions();
+
+        setSubmitResult({
+          success: true,
+          message: 'GitHub Contribution Issue prepared! Click to launch the issue and trigger the automated GitHub Action workflow.',
+          mode: 'github-actions'
+        });
+      } catch (err: any) {
+        setSubmitResult({
+          success: false,
+          message: err.message || 'Failed to prepare GitHub issue payload.'
+        });
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
+    // ==========================================
+    // ROUTE 2: Direct Server API (Node.js backend)
+    // ==========================================
     try {
       const fileBase64 = await fileToBase64(file);
 
@@ -259,6 +479,18 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
         body: JSON.stringify(payload)
       });
 
+      if (res.status === 404) {
+        // App is deployed statically without a backend!
+        // Automatically switch user to Zero-Server GitHub Actions mode
+        setSubmissionMode('github-actions');
+        setIsSubmitting(false);
+        setSubmitResult({
+          success: false,
+          message: 'Server API not found (detected static GitHub Pages hosting). Switched to Zero-Server GitHub Actions mode!'
+        });
+        return;
+      }
+
       const data = await res.json();
 
       if (res.ok && data.success) {
@@ -267,10 +499,11 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
           message: data.message || 'Contribution submitted successfully!',
           githubSynced: data.githubSynced,
           commitUrl: data.commitUrl,
-          githubUrl: data.githubUrl
+          githubUrl: data.githubUrl,
+          mode: 'server-api'
         });
 
-        // Reset form fields
+        // Reset form
         setDoi('');
         setAuthors('');
         setContact('');
@@ -281,7 +514,6 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
         setAutoFilledFields({});
         setFormErrors({});
 
-        // Refresh contributions list
         fetchContributions();
         if (onPaperContributed) onPaperContributed();
       } else {
@@ -293,11 +525,17 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
     } catch (err: any) {
       setSubmitResult({
         success: false,
-        message: err.message || 'Network error occurred during submission.'
+        message: `${err.message || 'Network error'}. If running on static hosting without a server, use "Zero-Server (GitHub Actions)" mode.`
       });
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const copyIssueBody = () => {
+    navigator.clipboard.writeText(generatedIssueBody);
+    setCopiedPayload(true);
+    setTimeout(() => setCopiedPayload(false), 2500);
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -308,11 +546,12 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto pb-16">
-      {/* Hero Header with Architecture Badges */}
+      {/* Hero Header */}
       <section className="bg-white p-8 rounded-3xl shadow-sm border border-black/5">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="inline-flex items-center px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-semibold">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-semibold">
+              <Bot size={13} />
               Peer Review Contribution Program
             </div>
             <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-black/90">
@@ -321,128 +560,170 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
             <p className="text-sm text-black/60 max-w-2xl leading-relaxed">
               Expand the Systematic Literature Review on <strong>Construction Methods (CMs) in Extraterrestrial Environments (ETEs)</strong>. 
               Submit published manuscripts, technical notes, or conference preprints. All accepted records are archived in the 
-              repository’s dedicated <code className="bg-black/5 px-1.5 py-0.5 rounded text-black/80 font-mono text-xs">Contributions/</code> folder via atomic Git tree commits.
+              repository’s dedicated <code className="bg-black/5 px-1.5 py-0.5 rounded text-black/80 font-mono text-xs">Contributions/</code> folder.
             </p>
           </div>
 
           <div className="shrink-0 flex flex-col items-start md:items-end gap-2 bg-black/[0.02] p-4 rounded-2xl border border-black/5">
-            <div className="text-xs font-semibold text-black/70">
-              <span>Atomic Git Transactions</span>
+            <div className="text-xs font-semibold text-black/70 flex items-center gap-1.5">
+              <Bot size={13} className="text-indigo-600" />
+              <span>Zero-Server GitHub Actions</span>
             </div>
             <span className="font-mono text-xs text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100">
-              Contributions/ [Single Tree Commit]
+              .github/workflows/process-contribution.yml
             </span>
-            <span className="text-[11px] text-black/40">Clean Git log & zero partial writes</span>
+            <span className="text-[11px] text-black/40">Automated bot extracts & commits files</span>
           </div>
         </div>
       </section>
 
       {/* Prominent High-Yield Feature Callout: CrossRef DOI Resolution */}
-      <div className="bg-white p-6 sm:p-7 rounded-3xl shadow-sm border border-black/5 relative overflow-hidden">
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-          <div className="space-y-2">
-            <div className="inline-flex items-center px-3 py-1 rounded-full bg-indigo-50/80 text-indigo-700 text-xs font-semibold border border-indigo-100/60">
-              Fast-Track Workflow
+      <section className="bg-gradient-to-r from-indigo-50/70 via-white to-indigo-50/40 p-6 rounded-3xl border border-indigo-100 shadow-sm relative overflow-hidden">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full bg-indigo-600 text-white text-[10px] font-bold uppercase tracking-wider">
+                Instant Auto-Fill
+              </span>
+              <h3 className="font-bold text-base text-black/90">
+                Automatic DOI Resolution (CrossRef API)
+              </h3>
             </div>
-            <h3 className="text-lg sm:text-xl font-bold tracking-tight text-black/90">
-              Instant DOI Resolution with CrossRef
-            </h3>
-            <p className="text-xs sm:text-sm text-black/60 max-w-2xl leading-relaxed">
-              Skip typing lengthy author lists and paper titles. Enter any publication DOI below and click 
-              <span className="text-indigo-700 font-semibold mx-1">Auto-Fill</span> to retrieve verified metadata directly from the official CrossRef scholarly database.
+            <p className="text-xs text-black/60 max-w-xl">
+              Type or paste any scientific DOI (e.g. <code className="bg-black/5 px-1.5 py-0.5 rounded font-mono text-indigo-900">10.1016/j.actaastro.2023.01.018</code>) and click <strong>Auto-Fill</strong>. Authors, title, journal, and publication context will be verified and populated automatically. <em>Works 100% in static deployment without server dependencies!</em>
             </p>
           </div>
 
-          <div className="shrink-0 flex items-center gap-3 bg-black/[0.02] px-4 py-3 rounded-2xl border border-black/5">
-            <div className="text-left text-xs">
-              <p className="font-semibold text-black/80">Saves ~90% Entry Time</p>
-              <p className="text-black/40 text-[11px]">CrossRef API Resolution</p>
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setDoi('10.1016/j.actaastro.2023.01.018');
+              setTimeout(() => {
+                const btn = document.getElementById('doi-resolve-button');
+                if (btn) btn.click();
+              }, 50);
+            }}
+            className="shrink-0 px-4 py-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-700 font-semibold text-xs rounded-xl border border-indigo-200 transition-all flex items-center gap-1.5 cursor-pointer"
+          >
+            <Sparkles size={13} />
+            <span>Try Sample Space DOI</span>
+          </button>
         </div>
-      </div>
+      </section>
 
-      {/* Submission Feedback Alert */}
-      {submitResult && (
-        <div className={`p-6 rounded-3xl border transition-all ${
-          submitResult.success 
-            ? 'bg-emerald-50/80 border-emerald-200 text-emerald-950' 
-            : 'bg-rose-50 border-rose-200 text-rose-950'
-        }`}>
-          <div className="flex items-start gap-4">
-            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
-              submitResult.success ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'
-            }`}>
-              {submitResult.success ? <CheckCircle2 size={22} /> : <AlertCircle size={22} />}
+      {/* Main Grid: Form (7 cols) + Sidebar/History (5 cols) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        
+        {/* Left: Contribution Submission Form (7 cols) */}
+        <div className="lg:col-span-7 bg-white p-7 rounded-3xl shadow-sm border border-black/5 space-y-6">
+          
+          {/* Architecture Mode Toggle: GitHub Actions (Zero Server) vs Direct Server */}
+          <div className="p-4 rounded-2xl bg-black/[0.02] border border-black/5 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-black/70 flex items-center gap-1.5">
+                <ShieldCheck size={14} className="text-indigo-600" />
+                Ingest Architecture
+              </span>
+              <span className="text-[11px] text-black/40">Select submission pipeline</span>
             </div>
-            <div className="flex-1 space-y-1.5">
-              <div className="flex items-center gap-2">
-                <h4 className="font-bold text-sm sm:text-base">
-                  {submitResult.success ? 'Paper Contribution Recorded' : 'Submission Encountered an Issue'}
-                </h4>
-                {submitResult.githubSynced && (
-                  <span className="text-[11px] font-semibold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300">
-                    Atomic Git Commit Verified
-                  </span>
-                )}
+
+            <div className="grid grid-cols-2 gap-2 p-1 bg-black/5 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setSubmissionMode('github-actions')}
+                className={`py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  submissionMode === 'github-actions'
+                    ? 'bg-white text-indigo-900 shadow-sm border border-black/5'
+                    : 'text-black/60 hover:text-black'
+                }`}
+              >
+                <Bot size={13} />
+                <span>GitHub Actions (Zero Server)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSubmissionMode('server-api')}
+                className={`py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  submissionMode === 'server-api'
+                    ? 'bg-white text-black shadow-sm border border-black/5'
+                    : 'text-black/60 hover:text-black'
+                }`}
+              >
+                <Server size={13} />
+                <span>Direct Server API</span>
+              </button>
+            </div>
+
+            {submissionMode === 'github-actions' ? (
+              <div className="text-[11px] text-indigo-900 bg-indigo-50/70 p-3 rounded-xl border border-indigo-100 flex items-start gap-2">
+                <Bot size={15} className="text-indigo-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-indigo-950">Zero External Servers — Static GitHub Pages Compatible</p>
+                  <p className="text-indigo-800/80 leading-relaxed mt-0.5">
+                    Submissions format into a standardized GitHub Issue. The repository's automated GitHub Action (<code>.github/workflows/process-contribution.yml</code>) extracts the manuscript and metadata, commits directly into <code>Contributions/</code>, and archives it.
+                  </p>
+                </div>
               </div>
-              <p className="text-xs sm:text-sm text-black/70 leading-relaxed">
-                {submitResult.message}
-              </p>
-              <div className="pt-2 flex flex-wrap items-center gap-3">
+            ) : (
+              <div className="text-[11px] text-black/60 bg-black/[0.02] p-3 rounded-xl border border-black/5 flex items-start gap-2">
+                <Server size={14} className="text-black/50 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-semibold text-black/80">Full-Stack Node.js Mode</p>
+                  <p className="leading-relaxed mt-0.5">
+                    Requires a running Node.js / Express backend with SQLite and server-side Git tree commits.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Submission Feedback Banner */}
+          {submitResult && (
+            <div className={`p-4 rounded-2xl border text-sm flex items-start gap-3 ${
+              submitResult.success 
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900' 
+                : 'bg-rose-50 border-rose-200 text-rose-900'
+            }`}>
+              {submitResult.success ? (
+                <CheckCircle2 size={18} className="text-emerald-600 shrink-0 mt-0.5" />
+              ) : (
+                <AlertCircle size={18} className="text-rose-600 shrink-0 mt-0.5" />
+              )}
+              <div className="space-y-1">
+                <p className="font-semibold">{submitResult.message}</p>
                 {submitResult.commitUrl && (
                   <a 
                     href={submitResult.commitUrl} 
                     target="_blank" 
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-black text-white rounded-xl text-xs font-semibold hover:bg-black/80 transition-colors shadow-xs"
+                    className="inline-flex items-center gap-1 text-xs text-emerald-800 underline font-mono font-medium hover:text-emerald-950 pt-1"
                   >
-                    <GitCommit size={13} />
-                    <span>View Atomic Commit</span>
-                    <ExternalLink size={12} />
+                    <GitCommit size={12} />
+                    View Atomic Git Commit on GitHub
+                    <ExternalLink size={10} />
                   </a>
                 )}
-                {submitResult.githubUrl && (
-                  <a 
-                    href={submitResult.githubUrl} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-black/5 hover:bg-black/10 text-black/80 rounded-xl text-xs font-semibold transition-colors"
+                {submitResult.mode === 'github-actions' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowIssueModal(true)}
+                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition-colors"
                   >
-                    <Github size={13} />
-                    <span>View Directory on GitHub</span>
-                    <ExternalLink size={12} />
-                  </a>
+                    <span>View GitHub Issue Details</span>
+                    <ArrowUpRight size={13} />
+                  </button>
                 )}
               </div>
             </div>
-            <button 
-              onClick={() => setSubmitResult(null)}
-              className="p-1.5 text-black/40 hover:text-black rounded-lg transition-colors cursor-pointer"
-            >
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-      )}
+          )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left: Main Form (7 cols) */}
-        <div className="lg:col-span-7">
-          <form onSubmit={handleSubmit} className="bg-white p-8 rounded-3xl shadow-sm border border-black/5 space-y-6">
-            <div className="flex items-center justify-between pb-4 border-b border-black/5">
-              <div className="flex items-center gap-2">
-                <BookOpen size={18} className="text-indigo-600" />
-                <h3 className="text-base font-bold text-black/90">Manuscript Information</h3>
-              </div>
-              <span className="text-[11px] text-black/40 font-medium">* Mandatory fields</span>
-            </div>
-
-            {/* DOI Section with Highlighted CrossRef Auto-Fill Button */}
-            <div className="space-y-2 p-4 rounded-2xl bg-indigo-50/40 border border-indigo-100">
-              <label className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-black/80">
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {/* DOI Field with Auto-Fill Feature */}
+            <div className="space-y-1.5">
+              <label className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-black/70">
                 <span className="flex items-center gap-1.5">
-                  <FileCheck size={14} className="text-indigo-600" />
+                  <BookOpen size={13} className="text-indigo-500" />
                   Digital Object Identifier (DOI) <span className="text-rose-500">*</span>
                 </span>
                 {formErrors.doi && (
@@ -450,53 +731,59 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
                 )}
               </label>
 
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                <input
-                  type="text"
-                  value={doi}
-                  onChange={e => {
-                    setDoi(e.target.value);
-                    if (formErrors.doi) setFormErrors(prev => ({ ...prev, doi: '' }));
-                    if (doiResolveError) setDoiResolveError(null);
-                  }}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleResolveDoi();
-                    }
-                  }}
-                  placeholder="e.g. 10.1016/j.actaastro.2023.08.012 or https://doi.org/..."
-                  className={`flex-1 px-4 py-3 rounded-xl bg-white border transition-all text-sm outline-none font-mono focus:ring-2 focus:ring-indigo-500/20 ${
-                    formErrors.doi ? 'border-rose-400 bg-rose-50/20' : 'border-indigo-200 hover:border-indigo-400'
-                  }`}
-                />
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={doi}
+                    onChange={e => {
+                      setDoi(e.target.value);
+                      if (formErrors.doi) setFormErrors(prev => ({ ...prev, doi: '' }));
+                    }}
+                    placeholder="e.g. 10.1016/j.actaastro.2023.01.018 or https://doi.org/..."
+                    className={`w-full px-4 py-3 rounded-2xl bg-black/[0.02] border transition-all text-sm outline-none focus:bg-white focus:ring-2 focus:ring-black/10 font-mono ${
+                      formErrors.doi ? 'border-rose-400 bg-rose-50/20' : 'border-black/10 hover:border-black/20'
+                    }`}
+                  />
+                  {doi && (
+                    <button
+                      type="button"
+                      onClick={() => { setDoi(''); setDoiResolvedData(null); }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-black/30 hover:text-black/60 p-1"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
 
+                {/* Auto-Fill Button */}
                 <button
                   type="button"
+                  id="doi-resolve-button"
                   onClick={handleResolveDoi}
                   disabled={isResolvingDoi || !doi.trim()}
-                  className="px-4 py-3 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Auto-fill authors, title, and citation details from CrossRef"
+                  className="px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-bold transition-all shadow-sm cursor-pointer disabled:opacity-40 flex items-center gap-1.5 shrink-0"
+                  title="Auto-fill publication metadata via CrossRef API"
                 >
                   {isResolvingDoi ? (
                     <>
-                      <RefreshCw size={14} className="animate-spin" />
+                      <RefreshCw size={13} className="animate-spin" />
                       <span>Resolving...</span>
                     </>
                   ) : (
                     <>
-                      <Sparkles size={14} className="text-amber-300" />
-                      <span>Auto-Fill with CrossRef</span>
+                      <Sparkles size={13} />
+                      <span>Auto-Fill</span>
                     </>
                   )}
                 </button>
               </div>
 
-              {/* Resolved Preview Card */}
+              {/* Resolved Data Preview Card */}
               {doiResolvedData && (
-                <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-950 flex items-start justify-between gap-3 text-xs animate-in fade-in duration-200">
+                <div className="p-3.5 rounded-2xl bg-emerald-50/80 border border-emerald-200 text-xs flex items-start justify-between gap-3 animate-in fade-in duration-200">
                   <div className="flex items-start gap-2.5">
-                    <CheckCircle2 size={16} className="text-emerald-600 mt-0.5 shrink-0" />
+                    <CheckCircle2 size={16} className="text-emerald-600 shrink-0 mt-0.5" />
                     <div className="space-y-0.5">
                       <p className="font-bold text-emerald-900">
                         CrossRef Verified: {doiResolvedData.journal || 'Journal Paper'} {doiResolvedData.year && `(${doiResolvedData.year})`}
@@ -512,7 +799,7 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
                   <button 
                     type="button" 
                     onClick={() => setDoiResolvedData(null)}
-                    className="text-emerald-700/60 hover:text-emerald-900 p-1"
+                    className="text-emerald-700/60 hover:text-emerald-900 p-1 cursor-pointer"
                   >
                     <X size={14} />
                   </button>
@@ -564,7 +851,7 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
               </p>
             </div>
 
-            {/* Paper Title (Auto-filled by CrossRef or Auto-suggested from File) */}
+            {/* Paper Title */}
             <div className="space-y-1.5">
               <label className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-black/70">
                 <span className="flex items-center gap-1.5">
@@ -649,32 +936,34 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
                   <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto mb-3">
                     <UploadCloud size={24} />
                   </div>
-                  <p className="text-sm font-semibold text-black/80">
-                    Click to browse or drag & drop paper file
+                  <p className="text-sm font-bold text-black/80">
+                    Click to browse or drop manuscript file here
                   </p>
                   <p className="text-xs text-black/40 mt-1">
-                    Accepts <strong>.pdf</strong>, <strong>.doc</strong>, <strong>.docx</strong>, or <strong>.md</strong> files
+                    Accepts research manuscripts, technical notes, or conference papers (.pdf, .doc, .docx, .md)
                   </p>
                 </div>
               ) : (
-                <div className="p-4 rounded-2xl border border-indigo-200 bg-indigo-50/30 flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3 overflow-hidden">
+                <div className="p-4 rounded-2xl bg-indigo-50/50 border border-indigo-100 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
-                      <FileText size={20} />
+                      <FileText size={18} />
                     </div>
-                    <div className="overflow-hidden">
-                      <p className="text-sm font-semibold text-black/90 truncate">{file.name}</p>
-                      <p className="text-xs text-black/50">{formatFileSize(file.size)} &bull; {file.type || 'Document'}</p>
+                    <div className="space-y-0.5 truncate max-w-xs sm:max-w-md">
+                      <p className="text-xs font-bold text-black/90 truncate">
+                        {file.name}
+                      </p>
+                      <p className="text-[11px] text-black/50">
+                        {formatFileSize(file.size)} &bull; {file.type || 'Manuscript Document'}
+                      </p>
                     </div>
                   </div>
+
                   <button
                     type="button"
-                    onClick={() => {
-                      setFile(null);
-                      if (fileInputRef.current) fileInputRef.current.value = '';
-                    }}
-                    className="p-1.5 hover:bg-black/10 text-black/50 hover:text-black rounded-lg transition-colors cursor-pointer shrink-0"
-                    title="Remove selected file"
+                    onClick={() => setFile(null)}
+                    className="p-1.5 text-black/40 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
+                    title="Remove file"
                   >
                     <X size={16} />
                   </button>
@@ -722,17 +1011,27 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
                 {isSubmitting ? (
                   <>
                     <RefreshCw size={16} className="animate-spin" />
-                    <span>Committing via Atomic Git Tree...</span>
+                    <span>Processing Submission...</span>
+                  </>
+                ) : submissionMode === 'github-actions' ? (
+                  <>
+                    <Bot size={16} className="text-indigo-300" />
+                    <span>Submit via GitHub Action (Zero Server)</span>
                   </>
                 ) : (
                   <>
                     <UploadCloud size={16} />
-                    <span>Submit Paper Contribution</span>
+                    <span>Submit Paper Contribution (Server API)</span>
                   </>
                 )}
               </button>
+              
               <p className="text-[11px] text-center text-black/40 mt-2">
-                Submissions are stored in the <code className="font-mono text-black/60">Contributions/</code> repository directory in a single atomic Git transaction.
+                {submissionMode === 'github-actions' ? (
+                  <>Zero external servers &bull; Handled via GitHub Action automated workflow &bull; Archives into <code className="font-mono text-black/60">Contributions/</code></>
+                ) : (
+                  <>Direct commit to repository <code className="font-mono text-black/60">Contributions/</code> directory via Atomic Git Tree</>
+                )}
               </p>
             </div>
           </form>
@@ -760,13 +1059,26 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
               </li>
               <li className="flex items-start gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 shrink-0" />
-                <span><strong>Identifiers:</strong> A verifiable <strong>DOI</strong> (or preprint arXiv/OSF identifier) must be provided for academic indexing.</span>
+                <span><strong>DOI Mandatory:</strong> Must have an active or assigned DOI for automatic citation linkage and validation.</span>
               </li>
               <li className="flex items-start gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 shrink-0" />
-                <span><strong>Atomic Git Storage:</strong> Uploaded papers are committed to the <code className="bg-black/5 px-1 py-0.5 rounded text-black/80 font-mono text-[11px]">Contributions/</code> directory in a single atomic tree commit alongside metadata.</span>
+                <span><strong>Zero-Server Workflow:</strong> GitHub Actions parses issues labeled <code className="bg-black/5 px-1 rounded font-mono text-[11px]">contribution</code>, runs automated checks, and archives files to <code className="bg-black/5 px-1 rounded font-mono text-[11px]">Contributions/</code>.</span>
               </li>
             </ul>
+
+            <div className="pt-2 border-t border-black/5 flex items-center justify-between text-xs text-black/50">
+              <span>Automated GitHub Ingest</span>
+              <a 
+                href={`https://github.com/${REPO_FULL}/blob/main/.github/workflows/process-contribution.yml`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
+              >
+                <span>View Action YAML</span>
+                <ExternalLink size={11} />
+              </a>
+            </div>
           </div>
 
           {/* Submissions History Log */}
@@ -819,8 +1131,8 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
                           </>
                         ) : (
                           <>
-                            <FileCheck size={10} />
-                            Archived
+                            <Bot size={10} />
+                            Issue Bot
                           </>
                         )}
                       </span>
@@ -850,15 +1162,17 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
                             Repo
                           </a>
                         )}
-                        <a 
-                          href={`/api/contributions/${item.id}/download`}
-                          download
-                          className="text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 transition-colors"
-                          title="Download submitted manuscript"
-                        >
-                          <Download size={11} />
-                          Download
-                        </a>
+                        {item.filePath && (
+                          <a 
+                            href={`/api/contributions/${item.id}/download`}
+                            download
+                            className="text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 transition-colors"
+                            title="Download submitted manuscript"
+                          >
+                            <Download size={11} />
+                            Download
+                          </a>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -868,6 +1182,101 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
           </div>
         </div>
       </div>
+
+      {/* Modal / Dialog for GitHub Issue Submission (Zero-Server Ingest) */}
+      {showIssueModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-7 shadow-2xl border border-black/10 space-y-5 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between pb-3 border-b border-black/5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-indigo-50 text-indigo-700 flex items-center justify-center font-bold">
+                  <Bot size={20} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-black/90">
+                    Submit via GitHub Actions (Zero Server)
+                  </h3>
+                  <p className="text-xs text-black/50">
+                    Automated Ingest into <code className="font-mono text-black/70">Contributions/</code>
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowIssueModal(false)}
+                className="text-black/40 hover:text-black p-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-black/70 leading-relaxed">
+              <div className="p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-100 space-y-1.5 text-indigo-950">
+                <p className="font-bold flex items-center gap-1.5 text-indigo-900">
+                  <CheckCircle2 size={14} className="text-indigo-600" />
+                  Your Submission is Ready to Launch:
+                </p>
+                <p className="text-[11px] text-indigo-800">
+                  Click the button below to open a pre-filled GitHub Issue. Then, simply drag your manuscript file (<strong>{file?.name || 'manuscript'}</strong>) into GitHub's comment box and click <strong>Submit new issue</strong>.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <p className="font-bold text-black/80">Automated Pipeline Process:</p>
+                <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
+                  <div className="p-2.5 rounded-xl bg-black/[0.02] border border-black/5">
+                    <span className="block font-bold text-indigo-600 mb-0.5">1. Issue Created</span>
+                    <span className="text-black/50 text-[10px]">Metadata verified</span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-black/[0.02] border border-black/5">
+                    <span className="block font-bold text-indigo-600 mb-0.5">2. Action Bot Runs</span>
+                    <span className="text-black/50 text-[10px]">Extracts manuscript</span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-black/[0.02] border border-black/5">
+                    <span className="block font-bold text-indigo-600 mb-0.5">3. Repo Committed</span>
+                    <span className="text-black/50 text-[10px]">Saved in Contributions/</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="pt-2 flex flex-col sm:flex-row gap-2.5">
+              <a
+                href={generatedIssueUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => {
+                  setShowIssueModal(false);
+                }}
+                className="flex-1 py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Github size={15} />
+                <span>Open Pre-filled GitHub Issue</span>
+                <ArrowUpRight size={14} />
+              </a>
+
+              <button
+                type="button"
+                onClick={copyIssueBody}
+                className="py-3 px-4 bg-black/5 hover:bg-black/10 text-black/80 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                {copiedPayload ? (
+                  <>
+                    <Check size={14} className="text-emerald-600" />
+                    <span>Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy size={14} />
+                    <span>Copy Issue Data</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

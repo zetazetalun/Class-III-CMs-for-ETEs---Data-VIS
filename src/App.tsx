@@ -299,28 +299,46 @@ export default function App() {
     };
   }, [rawSummary, reviewPapers, reviewMappings]);
 
-  // Load visualization data from server database
+  // Load visualization data from server database with static fallback for GitHub Pages
   const fetchVisualizationState = async (silent = false) => {
     if (!silent) setVisLoading(true);
     try {
-      const response = await fetch('/api/vis-state');
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success && data.papers && data.papers.length > 0) {
-          setPapersState(data.papers || []);
-          setMappingsState(data.mappings || []);
-          setRawSummary(data.summary || null);
-          if (data.chatMessages) {
-            setChatMessages(data.chatMessages);
-          }
-          const timeStr = data.updatedAt 
-            ? new Date(data.updatedAt).toLocaleTimeString() 
-            : new Date().toLocaleTimeString();
-          setVisSyncTime(timeStr);
-        } else {
-          // If database is empty, auto-trigger a background sync
-          handleDirectRefresh();
+      let data: any = null;
+      try {
+        const response = await fetch('/api/vis-state');
+        if (response.ok) {
+          data = await response.json();
         }
+      } catch {
+        // Backend API not reachable (running statically on GitHub Pages)
+      }
+
+      // Static fallback: if /api/vis-state didn't succeed, load bundled static dataset
+      if (!data || !data.success || !data.papers || data.papers.length === 0) {
+        try {
+          const staticRes = await fetch('./data/default_analysis_state.json');
+          if (staticRes.ok) {
+            data = await staticRes.json();
+          }
+        } catch (staticErr) {
+          console.warn('Could not load static dataset:', staticErr);
+        }
+      }
+
+      if (data && (data.papers || data.success) && data.papers?.length > 0) {
+        setPapersState(data.papers || []);
+        setMappingsState(data.mappings || []);
+        setRawSummary(data.summary || null);
+        if (data.chatMessages) {
+          setChatMessages(data.chatMessages);
+        }
+        const timeStr = data.updatedAt 
+          ? new Date(data.updatedAt).toLocaleTimeString() 
+          : new Date().toLocaleTimeString();
+        setVisSyncTime(timeStr);
+      } else {
+        // If database is empty, auto-trigger a background sync
+        handleDirectRefresh();
       }
     } catch (error) {
       console.warn('Error fetching visualization state:', error);

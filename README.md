@@ -130,37 +130,36 @@ To generate a production-ready build:
 npm run build
 ```
 
-To start the production server:
+To start the full-stack production server:
 ```bash
 npm start
 ```
 
 ---
 
-## 🚀 Deployment to Vercel
+## 🚀 Deployment to GitHub Pages (Static Hosting)
 
-The repository includes a ready-to-use [`vercel.json`](./vercel.json) configured for Vite with API rewrites.
+The repository is configured for automated deployment to **GitHub Pages** with zero backend infrastructure:
 
-### Quick Deploy:
-1. **Push your code to GitHub**:
-   Ensure your latest commits are pushed to your GitHub repository:
-   ```bash
-   git add .
-   git commit -m "Configure Vercel deployment"
-   git push origin main
-   ```
-2. **Import into Vercel**:
-   - Go to [vercel.com/new](https://vercel.com/new) and log in.
-   - Select your GitHub repository (`SRL-on-Space-Architecture`).
-3. **Configure Project Settings**:
-   - **Framework Preset**: `Vite`
-   - **Build Command**: `npm run build`
-   - **Output Directory**: `dist`
-   - **Install Command**: `npm install`
-4. **Environment Variables**:
-   - Add `GEMINI_API_KEY`: *(Your Google AI Studio Gemini API key for Chatbox Q&A)*.
-5. **Click "Deploy"**:
-   - Vercel will build the frontend into `dist/` and route client paths and `/api/*` requests automatically.
+### Method A: Automated GitHub Actions (Recommended)
+1. Go to your repository on GitHub: `https://github.com/zetazetalun/SRL-on-Space-Architecture`
+2. Navigate to **Settings** > **Pages** (in the left sidebar).
+3. Under **Build and deployment** > **Source**, change from *Deploy from a branch* to **GitHub Actions**.
+4. Whenever you push to the `main` branch, the workflow (`.github/workflows/deploy-pages.yml`) builds and deploys the dashboard automatically.
+5. Your live site will be accessible at:
+   `https://zetazetalun.github.io/SRL-on-Space-Architecture/`
+
+### Method B: Single-Command Manual Deployment
+You can also build and publish directly from your local terminal:
+```bash
+npm run deploy
+```
+*(This builds the static bundle and pushes it to the `gh-pages` branch via the `gh-pages` utility).*
+
+### Features Supported in Static Mode:
+- **Interactive Visualizations**: Review synthesis, interactive charts, PRISMA flow chart, and force-directed knowledge graphs load instantly from the bundled dataset (`public/data/default_analysis_state.json`).
+- **Zero-Server Paper Contribution**: Contributions submitted via the dashboard are formatted into GitHub Issues and processed automatically by the repository's GitHub Action (`.github/workflows/process-contribution.yml`), archiving papers into `Contributions/` with zero server costs.
+- **Client-Side DOI Auto-Fill**: Live CrossRef API integration operates directly in the browser with CORS support.
 
 ---
 
