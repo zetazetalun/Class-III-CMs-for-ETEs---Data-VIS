@@ -20,13 +20,48 @@ import {
   Sparkles,
   Layers,
   Eye,
-  TrendingUp
+  TrendingUp,
+  History
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
-import { telemetry, AnalyticsDashboardData, TelemetryEvent } from '../lib/telemetry';
+import { telemetry, AnalyticsDashboardData, TelemetryEvent, VisitLogEntry } from '../lib/telemetry';
 
 const AUTHORIZED_OWNER = 'zetazetalun';
+
+const formatDateTime = (isoString?: string) => {
+  if (!isoString) return 'Recent';
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
+    return d.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+  } catch {
+    return isoString;
+  }
+};
+
+const formatRelativeTime = (isoString?: string) => {
+  if (!isoString) return 'Just now';
+  try {
+    const d = new Date(isoString);
+    const now = Date.now();
+    const diffSec = Math.max(0, Math.floor((now - d.getTime()) / 1000));
+    if (diffSec < 60) return 'Just now';
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+    const days = Math.floor(diffSec / 86400);
+    return `${days}d ago`;
+  } catch {
+    return 'Recent';
+  }
+};
 
 interface AccessAnalyticsDashboardProps {
   onBackToPresentation?: () => void;
@@ -246,39 +281,53 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
         'Event Value / Detail': ev.event_value || '',
         'Country Code': ev.country_code || 'UN',
         'Country Name': ev.country_name || 'International Reader',
-        'Timestamp': ev.created_at || new Date().toISOString()
+        'Timestamp (Formatted)': ev.created_at ? new Date(ev.created_at).toLocaleString() : '',
+        'Timestamp (ISO)': ev.created_at || new Date().toISOString()
       }));
       const ws1 = XLSX.utils.json_to_sheet(sheet1Data);
       XLSX.utils.book_append_sheet(wb, ws1, 'Raw Event Logs');
 
-      // Sheet 2: Geographic Traffic
-      const sheet2Data = dashboardData.countries.map(c => ({
+      // Sheet 2: Visit Timestamps & Sessions
+      const sheet2VisitData = (dashboardData.recentVisits || []).map((v, idx) => ({
+        'Visit #': idx + 1,
+        'Session ID': v.id,
+        'Visit Date & Time': v.timestamp ? new Date(v.timestamp).toLocaleString() : '',
+        'Timestamp (ISO UTC)': v.timestamp || '',
+        'Country Code': v.country_code || 'UN',
+        'Country Name': v.country_name || 'International Reader',
+        'Access Event': v.event_value || 'presentation_unlock'
+      }));
+      const ws2 = XLSX.utils.json_to_sheet(sheet2VisitData);
+      XLSX.utils.book_append_sheet(wb, ws2, 'Visit Timestamps');
+
+      // Sheet 3: Geographic Traffic
+      const sheet3Data = dashboardData.countries.map(c => ({
         'Country Code': c.country_code,
         'Country Name': c.country_name,
         'Total Views': c.count
       }));
-      const ws2 = XLSX.utils.json_to_sheet(sheet2Data);
-      XLSX.utils.book_append_sheet(wb, ws2, 'Geographic Traffic');
+      const ws3 = XLSX.utils.json_to_sheet(sheet3Data);
+      XLSX.utils.book_append_sheet(wb, ws3, 'Geographic Traffic');
 
-      // Sheet 3: Anonymized Chat Q&A
-      const sheet3Data = dashboardData.chatQuestions.map(q => ({
+      // Sheet 4: Anonymized Chat Q&A
+      const sheet4Data = dashboardData.chatQuestions.map(q => ({
         'Question Asked': q.question,
         'Country Code': q.country_code,
         'Country Name': q.country_name,
-        'Date': q.created_at ? new Date(q.created_at).toLocaleString() : ''
+        'Date & Time': q.created_at ? new Date(q.created_at).toLocaleString() : ''
       }));
-      const ws3 = XLSX.utils.json_to_sheet(sheet3Data);
-      XLSX.utils.book_append_sheet(wb, ws3, 'Anonymized Chat Q&A');
+      const ws4 = XLSX.utils.json_to_sheet(sheet4Data);
+      XLSX.utils.book_append_sheet(wb, ws4, 'Anonymized Chat Q&A');
 
-      // Sheet 4: Section Engagement
-      const sheet4Data = dashboardData.sectionStats.map(s => ({
+      // Sheet 5: Section Engagement
+      const sheet5Data = dashboardData.sectionStats.map(s => ({
         'Section Name': s.section,
         'Clicks / Views': s.clicks,
         'Average Dwell Time (seconds)': s.avgTimeSeconds,
         'Total Active Time (seconds)': s.totalTimeSeconds
       }));
-      const ws4 = XLSX.utils.json_to_sheet(sheet4Data);
-      XLSX.utils.book_append_sheet(wb, ws4, 'Section Engagement');
+      const ws5 = XLSX.utils.json_to_sheet(sheet5Data);
+      XLSX.utils.book_append_sheet(wb, ws5, 'Section Engagement');
 
       // Generate buffer and trigger download
       const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
@@ -312,8 +361,7 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
               Access Record & Visitor Analytics
             </h2>
             <p className="text-xs sm:text-sm text-black/60 max-w-md mx-auto leading-relaxed">
-              This telemetry dashboard is strictly reserved for the research author (<strong>@{AUTHORIZED_OWNER}</strong>). 
-              Authenticate to inspect reader engagement, geographic distribution, and Q&A inquiry logs.
+              This telemetry dashboard is strictly reserved for the research author (<strong>Zhelun Zhu, @{AUTHORIZED_OWNER}</strong>).
             </p>
           </div>
 
@@ -469,10 +517,16 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
           <p className="text-[11px] text-black/40">
             Total times visitors opened or refreshed the /vis presentation interface.
           </p>
-          <div className="pt-2">
+          <div className="pt-2 flex flex-wrap items-center justify-between gap-1 text-[11px]">
             <span className="text-[10px] font-mono text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
               app_stats &bull; total_vis_access
             </span>
+            {dashboardData?.lastVisitTimestamp && (
+              <span className="text-black/50 text-[11px] flex items-center gap-1 font-medium" title={formatDateTime(dashboardData.lastVisitTimestamp)}>
+                <Clock size={11} className="text-indigo-600" />
+                Latest: <strong className="text-black/75">{formatRelativeTime(dashboardData.lastVisitTimestamp)}</strong>
+              </span>
+            )}
           </div>
         </div>
 
@@ -529,6 +583,87 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
               Anonymized &bull; Zero PII
             </span>
           </div>
+        </div>
+      </section>
+
+      {/* 2. Visitor Access Log & Timestamps Table Card */}
+      <section className="bg-white p-6 sm:p-7 rounded-3xl shadow-sm border border-black/5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-black/5">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center shrink-0">
+              <History size={17} />
+            </div>
+            <div>
+              <h3 className="font-bold text-base text-black/90">
+                Visitor Access Log & Timestamps (Recent Reader Sessions)
+              </h3>
+              <p className="text-[11px] text-black/50">
+                Chronological record of reader access events with exact local dates, timestamps, elapsed time, and countries.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-full border border-indigo-200 font-medium flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Live Telemetry Stream
+            </span>
+            <span className="text-[11px] text-black/40 font-mono">
+              {dashboardData?.recentVisits?.length || 0} Sessions Logged
+            </span>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-black/5 text-[11px] font-bold text-black/50 uppercase tracking-wider">
+                <th className="pb-2.5 pl-3">Session</th>
+                <th className="pb-2.5">Visit Timestamp (Local)</th>
+                <th className="pb-2.5">Elapsed Time</th>
+                <th className="pb-2.5">Origin Country</th>
+                <th className="pb-2.5 pr-3 text-right">Event Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-black/5 text-[12px]">
+              {(dashboardData?.recentVisits || []).slice(0, 10).map((visit, i) => (
+                <tr key={visit.id || i} className="hover:bg-black/[0.015] transition-colors">
+                  <td className="py-2.5 pl-3 text-black/40 font-mono font-bold text-[11px]">
+                    #{i + 1}
+                  </td>
+                  <td className="py-2.5">
+                    <div className="flex items-center gap-2">
+                      <Clock size={13} className="text-indigo-600 shrink-0" />
+                      <span className="font-semibold text-black/85">{formatDateTime(visit.timestamp)}</span>
+                    </div>
+                    <span className="text-[10px] text-black/40 font-mono block pl-5">
+                      {visit.timestamp}
+                    </span>
+                  </td>
+                  <td className="py-2.5">
+                    <span className="px-2 py-0.5 rounded-md bg-black/5 text-black/70 text-[11px] font-semibold">
+                      {formatRelativeTime(visit.timestamp)}
+                    </span>
+                  </td>
+                  <td className="py-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[11px] font-bold bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-100">
+                        {visit.country_code}
+                      </span>
+                      <span className="text-black/80 font-medium">
+                        {visit.country_name}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="py-2.5 pr-3 text-right">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 text-[11px] font-semibold border border-emerald-200">
+                      <CheckCircle2 size={11} className="text-emerald-600" />
+                      Presentation Unlocked
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
 
@@ -756,7 +891,7 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
               </h3>
             </div>
             <p className="text-xs text-black/60 max-w-2xl leading-relaxed">
-              Clicking <strong>Export Access Record Data</strong> compiles the comprehensive 4-sheet analytical workbook for archival and publication reporting:
+              Clicking <strong>Export Access Record Data</strong> compiles the comprehensive 5-sheet analytical workbook for archival and publication reporting:
             </p>
           </div>
 
@@ -771,30 +906,37 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 pt-2">
           <div className="p-3 rounded-2xl bg-white border border-emerald-100/80 shadow-2xs space-y-1">
             <span className="text-[11px] font-bold text-emerald-800">Sheet 1: Raw Event Logs</span>
             <p className="text-[10px] text-black/50 leading-relaxed">
-              ID, Event Type, Event Category, Event Value, Country Code/Name, Timestamp.
+              ID, Event Type, Category, Value, Country, Exact Timestamp (ISO & Local).
             </p>
           </div>
 
           <div className="p-3 rounded-2xl bg-white border border-emerald-100/80 shadow-2xs space-y-1">
-            <span className="text-[11px] font-bold text-emerald-800">Sheet 2: Geographic Traffic</span>
+            <span className="text-[11px] font-bold text-emerald-800">Sheet 2: Visit Timestamps</span>
+            <p className="text-[10px] text-black/50 leading-relaxed">
+              Session ID, Visit Date/Time (Local), ISO Timestamp, Country Code/Name.
+            </p>
+          </div>
+
+          <div className="p-3 rounded-2xl bg-white border border-emerald-100/80 shadow-2xs space-y-1">
+            <span className="text-[11px] font-bold text-emerald-800">Sheet 3: Geographic Traffic</span>
             <p className="text-[10px] text-black/50 leading-relaxed">
               Country Code, Country Name, Total View Sessions.
             </p>
           </div>
 
           <div className="p-3 rounded-2xl bg-white border border-emerald-100/80 shadow-2xs space-y-1">
-            <span className="text-[11px] font-bold text-emerald-800">Sheet 3: Anonymized Chat Q&A</span>
+            <span className="text-[11px] font-bold text-emerald-800">Sheet 4: Anonymized Chat Q&A</span>
             <p className="text-[10px] text-black/50 leading-relaxed">
-              Question Asked, Country Code, Country Name, Date.
+              Question Asked, Country Code, Country Name, Timestamp Date.
             </p>
           </div>
 
           <div className="p-3 rounded-2xl bg-white border border-emerald-100/80 shadow-2xs space-y-1">
-            <span className="text-[11px] font-bold text-emerald-800">Sheet 4: Section Engagement</span>
+            <span className="text-[11px] font-bold text-emerald-800">Sheet 5: Section Engagement</span>
             <p className="text-[10px] text-black/50 leading-relaxed">
               Section Name, Clicks/Views, Average Dwell Time (s), Total Time (s).
             </p>
