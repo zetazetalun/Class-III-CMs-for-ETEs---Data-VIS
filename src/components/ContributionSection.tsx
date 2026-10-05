@@ -35,8 +35,15 @@ const REPO_NAME = 'Class-III-CMs-for-ETEs---Data-VIS';
 const REPO_FULL = `${REPO_OWNER}/${REPO_NAME}`;
 
 export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPaperContributed }) => {
-  // Submission mode: 'github-actions' (Zero External Servers) vs 'server-api' (Node.js Express)
-  const [submissionMode, setSubmissionMode] = useState<'github-actions' | 'server-api'>('github-actions');
+  // Submission mode: 'server-api' (Direct / Auto) vs 'github-actions' (Zero External Servers)
+  const isStaticSite = typeof window !== 'undefined' && (
+    window.location.hostname.endsWith('github.io') || 
+    window.location.pathname.includes('/Class-III-CMs-for-ETEs---Data-VIS')
+  );
+
+  const [submissionMode, setSubmissionMode] = useState<'server-api' | 'github-actions'>(() => {
+    return isStaticSite ? 'github-actions' : 'server-api';
+  });
 
   // Form fields
   const [doi, setDoi] = useState('');
@@ -301,10 +308,6 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
   const validateForm = (): boolean => {
     const errors: { [key: string]: string } = {};
 
-    if (!doi.trim()) {
-      errors.doi = 'Digital Object Identifier (DOI) is required.';
-    }
-
     if (!authors.trim()) {
       errors.authors = 'Author(s) information is required.';
     }
@@ -336,9 +339,9 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
     });
   };
 
-  // Build structured issue body for GitHub Actions automation
-  const buildIssueMarkdown = (fileBase64?: string): string => {
-    const cleanDoi = doi.trim().replace(/^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:)/i, '').trim();
+  // Build structured full issue markdown for clipboard and GitHub Actions ingest
+  const buildFullIssueMarkdown = (): string => {
+    const cleanDoi = doi.trim() ? doi.trim().replace(/^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:)/i, '').trim() : 'Preprint / In-Review';
     const paperTitle = title.trim() || (file ? file.name : 'Manuscript Submission');
 
     const metadataPayload = {
@@ -350,8 +353,7 @@ export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPape
       fileName: file ? file.name : 'manuscript.pdf',
       fileSize: file ? file.size : 0,
       fileType: file ? file.type : 'application/pdf',
-      submittedAt: new Date().toISOString(),
-      ...(fileBase64 && file && file.size < 500000 ? { fileBase64 } : {})
+      submittedAt: new Date().toISOString()
     };
 
     return `## 📄 Systematic Literature Review Paper Contribution
@@ -376,12 +378,93 @@ ${notes.trim() || '*No additional notes provided.*'}
 
 ---
 ### 📎 Manuscript Attachment Instructions
-Please drag and drop your paper file (**${file ? file.name : 'PDF/Word'}**) into this issue box below so it is attached directly to GitHub!
+Please drag and drop your paper file (**${file ? file.name : 'PDF/Word'}**) into this issue comment box below so it is attached directly to GitHub!
 
 <!-- CONTRIBUTION_METADATA_START -->
 ${JSON.stringify(metadataPayload, null, 2)}
 <!-- CONTRIBUTION_METADATA_END -->
 `;
+  };
+
+  // Build a compact, safe issue URL body to guarantee the URL never hits HTTP 414 length limit
+  const buildCompactIssueUrl = (cleanTitle: string, cleanDoi: string): string => {
+    const shortNotes = notes.trim().length > 250 ? notes.trim().slice(0, 250) + '... (Full details copied to clipboard)' : notes.trim();
+
+    const compactBody = `## 📄 Systematic Literature Review Paper Contribution
+
+### Author(s)
+${authors.trim()}
+
+### Contact
+${contact.trim()}
+
+### DOI
+${cleanDoi}
+
+### Paper Title
+${cleanTitle}
+
+### Manuscript File
+${file ? `**${file.name}** (${(file.size / 1024).toFixed(1)} KB)` : 'Attached manuscript'}
+
+${shortNotes ? `### Notes / Abstract\n${shortNotes}\n` : ''}
+---
+### 📎 Manuscript Attachment Instructions
+Please drag and drop your paper file (**${file ? file.name : 'PDF/Word'}**) into this issue box below!
+
+*(Full metadata block has been copied to your clipboard).*
+`;
+
+    const encodedTitle = encodeURIComponent(`[Contribution]: ${cleanTitle}`);
+    const encodedBody = encodeURIComponent(compactBody);
+    const encodedLabels = encodeURIComponent('contribution');
+    return `https://github.com/${REPO_FULL}/issues/new?title=${encodedTitle}&labels=${encodedLabels}&body=${encodedBody}`;
+  };
+
+  const launchGitHubActionsModal = () => {
+    const fullBody = buildFullIssueMarkdown();
+    const cleanTitle = title.trim() || (file ? file.name : 'Manuscript Submission');
+    const cleanDoi = doi.trim() ? doi.trim().replace(/^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:)/i, '').trim() : 'Preprint / In-Review';
+    const issueUrl = buildCompactIssueUrl(cleanTitle, cleanDoi);
+
+    setGeneratedIssueUrl(issueUrl);
+    setGeneratedIssueBody(fullBody);
+    setShowIssueModal(true);
+
+    // Auto-copy full issue body to clipboard so user can effortlessly paste if desired
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(fullBody);
+        setCopiedPayload(true);
+        setTimeout(() => setCopiedPayload(false), 3000);
+      }
+    } catch (_) {}
+
+    if (file) {
+      const localRecord: PaperContribution = {
+        id: Date.now(),
+        authors: authors.trim(),
+        contact: contact.trim(),
+        doi: cleanDoi,
+        title: cleanTitle,
+        notes: notes.trim(),
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type || 'application/pdf',
+        filePath: '',
+        githubSynced: false,
+        githubUrl: `https://github.com/${REPO_FULL}/issues`,
+        createdAt: new Date().toISOString()
+      };
+      saveLocalContribution(localRecord);
+      fetchContributions();
+    }
+
+    setSubmitResult({
+      success: true,
+      message: 'GitHub Contribution Issue prepared! Click to launch the issue and attach your paper.',
+      mode: 'github-actions'
+    });
   };
 
   // Form Submit Handler
@@ -392,58 +475,10 @@ ${JSON.stringify(metadataPayload, null, 2)}
     setIsSubmitting(true);
     setSubmitResult(null);
 
-    // ==========================================
-    // ROUTE 1: Zero-Server GitHub Actions Mode
-    // ==========================================
-    if (submissionMode === 'github-actions') {
+    // If static GitHub Pages deployment, or user picked GitHub Actions mode, launch directly
+    if (isStaticSite || submissionMode === 'github-actions') {
       try {
-        let base64Data = '';
-        if (file.size < 500000) {
-          try {
-            base64Data = await fileToBase64(file);
-          } catch {
-            // ignore
-          }
-        }
-
-        const issueBody = buildIssueMarkdown(base64Data);
-        const cleanTitle = title.trim() || file.name;
-        const issueTitle = `[Contribution]: ${cleanTitle}`;
-        
-        // Encode URL for GitHub New Issue
-        const encodedTitle = encodeURIComponent(issueTitle);
-        const encodedBody = encodeURIComponent(issueBody);
-        const encodedLabels = encodeURIComponent('contribution');
-        const issueUrl = `https://github.com/${REPO_FULL}/issues/new?title=${encodedTitle}&labels=${encodedLabels}&body=${encodedBody}`;
-
-        setGeneratedIssueUrl(issueUrl);
-        setGeneratedIssueBody(issueBody);
-        setShowIssueModal(true);
-
-        // Record in local cache
-        const localRecord: PaperContribution = {
-          id: Date.now(),
-          authors: authors.trim(),
-          contact: contact.trim(),
-          doi: doi.trim(),
-          title: cleanTitle,
-          notes: notes.trim(),
-          fileName: file.name,
-          fileSize: file.size,
-          fileType: file.type || 'application/pdf',
-          filePath: '',
-          githubSynced: false,
-          githubUrl: `https://github.com/${REPO_FULL}/issues`,
-          createdAt: new Date().toISOString()
-        };
-        saveLocalContribution(localRecord);
-        fetchContributions();
-
-        setSubmitResult({
-          success: true,
-          message: 'GitHub Contribution Issue prepared! Click to launch the issue and trigger the automated GitHub Action workflow.',
-          mode: 'github-actions'
-        });
+        launchGitHubActionsModal();
       } catch (err: any) {
         setSubmitResult({
           success: false,
@@ -455,16 +490,14 @@ ${JSON.stringify(metadataPayload, null, 2)}
       return;
     }
 
-    // ==========================================
-    // ROUTE 2: Direct Server API (Node.js backend)
-    // ==========================================
+    // Direct Server API (with automatic fallback to GitHub Actions if server is offline)
     try {
       const fileBase64 = await fileToBase64(file);
 
       const payload = {
         authors: authors.trim(),
         contact: contact.trim(),
-        doi: doi.trim(),
+        doi: doi.trim() || 'Preprint / In-Review',
         title: title.trim() || file.name,
         notes: notes.trim(),
         fileName: file.name,
@@ -473,27 +506,42 @@ ${JSON.stringify(metadataPayload, null, 2)}
         fileBase64
       };
 
-      const res = await fetch('/api/contributions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      let res: Response | null = null;
+      try {
+        res = await fetch('/api/contributions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } catch (fetchErr) {
+        console.warn('Backend /api/contributions unreachable, falling back to GitHub Actions mode.');
+      }
 
-      if (res.status === 404) {
-        // App is deployed statically without a backend!
-        // Automatically switch user to Zero-Server GitHub Actions mode
+      // If backend returned 404/405 or was unreachable, seamlessly route to GitHub Actions
+      if (!res || res.status === 404 || res.status === 405) {
         setSubmissionMode('github-actions');
-        setIsSubmitting(false);
+        launchGitHubActionsModal();
+        return;
+      }
+
+      if (!res.ok) {
+        let errorMsg = 'Failed to submit contribution.';
+        try {
+          const errData = await res.json();
+          errorMsg = errData.error || errorMsg;
+        } catch {
+          errorMsg = `Server response error (${res.status}: ${res.statusText})`;
+        }
         setSubmitResult({
           success: false,
-          message: 'Server API not found (detected static GitHub Pages hosting). Switched to Zero-Server GitHub Actions mode!'
+          message: errorMsg
         });
         return;
       }
 
       const data = await res.json();
 
-      if (res.ok && data.success) {
+      if (data.success) {
         setSubmitResult({
           success: true,
           message: data.message || 'Contribution submitted successfully!',
@@ -519,14 +567,12 @@ ${JSON.stringify(metadataPayload, null, 2)}
       } else {
         setSubmitResult({
           success: false,
-          message: data.error || 'Failed to submit contribution. Please verify inputs and try again.'
+          message: data.error || 'Failed to submit contribution. You can also switch to "GitHub Actions" mode above.'
         });
       }
     } catch (err: any) {
-      setSubmitResult({
-        success: false,
-        message: `${err.message || 'Network error'}. If running on static hosting without a server, use "Zero-Server (GitHub Actions)" mode.`
-      });
+      console.warn('Error in server API submission:', err);
+      launchGitHubActionsModal();
     } finally {
       setIsSubmitting(false);
     }
@@ -724,11 +770,9 @@ ${JSON.stringify(metadataPayload, null, 2)}
               <label className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-black/70">
                 <span className="flex items-center gap-1.5">
                   <BookOpen size={13} className="text-indigo-500" />
-                  Digital Object Identifier (DOI) <span className="text-rose-500">*</span>
+                  Digital Object Identifier (DOI)
                 </span>
-                {formErrors.doi && (
-                  <span className="text-rose-500 normal-case font-normal text-[11px]">{formErrors.doi}</span>
-                )}
+                <span className="text-[11px] text-black/40 font-normal">Optional for Preprints / In-Review</span>
               </label>
 
               <div className="flex gap-2">
@@ -740,7 +784,7 @@ ${JSON.stringify(metadataPayload, null, 2)}
                       setDoi(e.target.value);
                       if (formErrors.doi) setFormErrors(prev => ({ ...prev, doi: '' }));
                     }}
-                    placeholder="e.g. 10.1016/j.actaastro.2023.01.018 or https://doi.org/..."
+                    placeholder="e.g. 10.1016/j.actaastro.2023.01.018 (or leave blank if preprint)"
                     className={`w-full px-4 py-3 rounded-2xl bg-black/[0.02] border transition-all text-sm outline-none focus:bg-white focus:ring-2 focus:ring-black/10 font-mono ${
                       formErrors.doi ? 'border-rose-400 bg-rose-50/20' : 'border-black/10 hover:border-black/20'
                     }`}

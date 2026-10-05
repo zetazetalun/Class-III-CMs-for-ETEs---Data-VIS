@@ -774,9 +774,7 @@ async function startServer() {
       if (!contact || typeof contact !== 'string' || !contact.trim()) {
         return res.status(400).json({ error: "Contact information is mandatory." });
       }
-      if (!doi || typeof doi !== 'string' || !doi.trim()) {
-        return res.status(400).json({ error: "DOI (Digital Object Identifier) is mandatory." });
-      }
+      const cleanDoi = (doi && typeof doi === 'string' && doi.trim()) ? doi.trim() : 'Preprint / In-Review';
       if (!fileName || !fileBase64) {
         return res.status(400).json({ error: "Paper manuscript file upload is mandatory." });
       }
@@ -803,7 +801,8 @@ async function startServer() {
       // Decode and save file locally
       const sanitizedFileName = path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
       const targetFilePath = path.join(targetLocalDir, sanitizedFileName);
-      const fileBuffer = Buffer.from(fileBase64, 'base64');
+      const cleanBase64 = fileBase64.replace(/^data:[^;]+;base64,/, '');
+      const fileBuffer = Buffer.from(cleanBase64, 'base64');
       await fs.writeFile(targetFilePath, fileBuffer);
 
       // Write metadata.json
@@ -811,7 +810,7 @@ async function startServer() {
         title: title ? title.trim() : sanitizedFileName,
         authors: authors.trim(),
         contact: contact.trim(),
-        doi: doi.trim(),
+        doi: cleanDoi,
         notes: notes ? notes.trim() : "",
         submittedAt: now.toISOString(),
         fileName: sanitizedFileName,
@@ -825,7 +824,7 @@ async function startServer() {
 
 - **Author(s)**: ${metadata.authors}
 - **Contact**: ${metadata.contact}
-- **DOI**: [${metadata.doi}](https://doi.org/${encodeURIComponent(metadata.doi)})
+- **DOI**: ${cleanDoi.startsWith('10.') ? `[${metadata.doi}](https://doi.org/${encodeURIComponent(metadata.doi)})` : metadata.doi}
 - **Submitted At**: ${metadata.submittedAt}
 - **Manuscript File**: [${sanitizedFileName}](./${encodeURIComponent(sanitizedFileName)}) (${(fileBuffer.length / 1024).toFixed(1)} KB)
 
@@ -854,7 +853,7 @@ ${metadata.notes ? `### Relevance & Research Notes\n${metadata.notes}\n` : ''}
       );
       const contributionId = info.lastInsertRowid;
 
-      // GitHub Atomic Git Tree Commit if token available
+      // GitHub Atomic Git Tree Commit if token available (with 10-second timeout protection)
       const githubToken = process.env.GITHUB_TOKEN;
       const repoFullName = process.env.GITHUB_REPO || 'zetazetalun/Class-III-CMs-for-ETEs---Data-VIS';
       const [owner, repo] = repoFullName.split('/');
@@ -864,91 +863,99 @@ ${metadata.notes ? `### Relevance & Research Notes\n${metadata.notes}\n` : ''}
 
       if (githubToken && owner && repo) {
         try {
-          const octokit = new Octokit({ auth: githubToken });
-          let branch = 'main';
-          try {
-            const repoRes = await octokit.rest.repos.get({ owner, repo });
-            if (repoRes.data.default_branch) branch = repoRes.data.default_branch;
-          } catch (_) {}
+          const syncPromise = (async () => {
+            const octokit = new Octokit({ auth: githubToken });
+            let branch = 'main';
+            try {
+              const repoRes = await octokit.rest.repos.get({ owner, repo });
+              if (repoRes.data.default_branch) branch = repoRes.data.default_branch;
+            } catch (_) {}
 
-          // 1. Get latest commit and base tree of branch
-          const refRes = await octokit.rest.git.getRef({
-            owner,
-            repo,
-            ref: `heads/${branch}`
-          });
-          const latestCommitSha = refRes.data.object.sha;
+            // 1. Get latest commit and base tree of branch
+            const refRes = await octokit.rest.git.getRef({
+              owner,
+              repo,
+              ref: `heads/${branch}`
+            });
+            const latestCommitSha = refRes.data.object.sha;
 
-          const commitRes = await octokit.rest.git.getCommit({
-            owner,
-            repo,
-            commit_sha: latestCommitSha
-          });
-          const baseTreeSha = commitRes.data.tree.sha;
+            const commitRes = await octokit.rest.git.getCommit({
+              owner,
+              repo,
+              commit_sha: latestCommitSha
+            });
+            const baseTreeSha = commitRes.data.tree.sha;
 
-          // 2. Create Blob for binary manuscript file
-          const blobRes = await octokit.rest.git.createBlob({
-            owner,
-            repo,
-            content: fileBuffer.toString('base64'),
-            encoding: 'base64'
-          });
-          const fileBlobSha = blobRes.data.sha;
+            // 2. Create Blob for binary manuscript file
+            const blobRes = await octokit.rest.git.createBlob({
+              owner,
+              repo,
+              content: fileBuffer.toString('base64'),
+              encoding: 'base64'
+            });
+            const fileBlobSha = blobRes.data.sha;
 
-          // 3. Create Atomic Git Tree with all files in one single operation
-          const treeRes = await octokit.rest.git.createTree({
-            owner,
-            repo,
-            base_tree: baseTreeSha,
-            tree: [
-              {
-                path: `Contributions/${folderName}/${sanitizedFileName}`,
-                mode: '100644',
-                type: 'blob',
-                sha: fileBlobSha
-              },
-              {
-                path: `Contributions/${folderName}/metadata.json`,
-                mode: '100644',
-                type: 'blob',
-                content: JSON.stringify(metadata, null, 2)
-              },
-              {
-                path: `Contributions/${folderName}/README.md`,
-                mode: '100644',
-                type: 'blob',
-                content: readmeContent
-              }
-            ]
-          });
-          const newTreeSha = treeRes.data.sha;
+            // 3. Create Atomic Git Tree with all files in one single operation
+            const treeRes = await octokit.rest.git.createTree({
+              owner,
+              repo,
+              base_tree: baseTreeSha,
+              tree: [
+                {
+                  path: `Contributions/${folderName}/${sanitizedFileName}`,
+                  mode: '100644',
+                  type: 'blob',
+                  sha: fileBlobSha
+                },
+                {
+                  path: `Contributions/${folderName}/metadata.json`,
+                  mode: '100644',
+                  type: 'blob',
+                  content: JSON.stringify(metadata, null, 2)
+                },
+                {
+                  path: `Contributions/${folderName}/README.md`,
+                  mode: '100644',
+                  type: 'blob',
+                  content: readmeContent
+                }
+              ]
+            });
+            const newTreeSha = treeRes.data.sha;
 
-          // 4. Create single Atomic Commit referencing the tree
-          const commitMessage = `Add literature contribution: ${metadata.title} by ${metadata.authors} [DOI: ${metadata.doi}]`;
-          const newCommitRes = await octokit.rest.git.createCommit({
-            owner,
-            repo,
-            message: commitMessage,
-            tree: newTreeSha,
-            parents: [latestCommitSha]
-          });
-          const newCommitSha = newCommitRes.data.sha;
+            // 4. Create single Atomic Commit referencing the tree
+            const commitMessage = `Add literature contribution: ${metadata.title} by ${metadata.authors} [DOI: ${metadata.doi}]`;
+            const newCommitRes = await octokit.rest.git.createCommit({
+              owner,
+              repo,
+              message: commitMessage,
+              tree: newTreeSha,
+              parents: [latestCommitSha]
+            });
+            const newCommitSha = newCommitRes.data.sha;
 
-          // 5. Update branch reference atomically
-          await octokit.rest.git.updateRef({
-            owner,
-            repo,
-            ref: `heads/${branch}`,
-            sha: newCommitSha
-          });
+            // 5. Update branch reference atomically
+            await octokit.rest.git.updateRef({
+              owner,
+              repo,
+              ref: `heads/${branch}`,
+              sha: newCommitSha
+            });
 
-          githubSynced = true;
-          commitUrl = `https://github.com/${owner}/${repo}/commit/${newCommitSha}`;
-          githubUrl = `https://github.com/${owner}/${repo}/tree/${branch}/Contributions/${folderName}`;
+            githubSynced = true;
+            commitUrl = `https://github.com/${owner}/${repo}/commit/${newCommitSha}`;
+            githubUrl = `https://github.com/${owner}/${repo}/tree/${branch}/Contributions/${folderName}`;
 
-          db.prepare(`
-            UPDATE contributions SET github_synced = 1, github_url = ?, commit_url = ? WHERE id = ?
-          `).run(githubUrl, commitUrl, contributionId);
+            db.prepare(`
+              UPDATE contributions SET github_synced = 1, github_url = ?, commit_url = ? WHERE id = ?
+            `).run(githubUrl, commitUrl, contributionId);
+          })();
+
+          // Max 10 seconds for GitHub remote sync so response always returns swiftly
+          await Promise.race([
+            syncPromise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error('GitHub sync timeout after 10s')), 10000))
+          ]);
         } catch (ghErr: any) {
           console.error('[GitHub Atomic Tree Push Warning]:', ghErr.message);
         }
@@ -959,7 +966,7 @@ ${metadata.notes ? `### Relevance & Research Notes\n${metadata.notes}\n` : ''}
         id: contributionId,
         githubSynced,
         commitUrl,
-        githubUrl: githubUrl || `https://github.com/${owner || 'zetazetalun'}/${repo || 'SRL-on-Space-Architecture'}/tree/main/Contributions`,
+        githubUrl: githubUrl || `https://github.com/${owner || 'zetazetalun'}/${repo || 'Class-III-CMs-for-ETEs---Data-VIS'}/tree/main/Contributions`,
         message: githubSynced
           ? 'Paper contribution successfully committed to GitHub repository as an atomic transaction in Contributions folder!'
           : 'Paper contribution saved locally in the Contributions repository folder. (Note: configure GITHUB_TOKEN on server for automatic remote commit push).'
