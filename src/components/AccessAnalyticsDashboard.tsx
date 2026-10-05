@@ -219,22 +219,6 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
           setAuthError('Please allow popups for this site to authenticate via GitHub.');
         }
       } else {
-        // If OAuth App Client ID is not registered, allow owner 1-click token confirmation
-        const serverToken = (window as any).process?.env?.GITHUB_TOKEN;
-        if (serverToken) {
-          const res = await fetch('/api/auth/verify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: serverToken })
-          });
-          if (res.ok) {
-            const authData = await res.json();
-            if (authData.authorized) {
-              grantAccess(authData);
-              return;
-            }
-          }
-        }
         setAuthError('GitHub OAuth App not yet configured. Please enter your GITHUB_TOKEN or admin token below.');
       }
     } catch (err: any) {

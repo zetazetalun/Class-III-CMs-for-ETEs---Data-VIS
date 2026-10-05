@@ -25,7 +25,7 @@ An interactive, high-performance data visualization dashboard and scientific exp
 - **Temporal Distribution**: Interactive publication timeline showing research density and surges from foundational space architecture eras to contemporary Artemis and Mars programs.
 - **Categorical Parameter Breakdown**: Visual distributions for:
   - **Research Types**: Primary (original experiments), Secondary (reviews/meta-analyses), and Tertiary literature.
-  - **Publication Formats**: Journal articles, conference proceedings, technical notes, preprints, patents, and manuals.
+  - **Publication Formats**: Journal articles, conference proceedings, technical notes, preprints, and manuals.
   - **Application Scenarios**: Surface, Underground (lava tubes), and Orbital.
   - **Target Locations**: Moon, Mars, Asteroids, and Deep Space.
   - **Habitat Classification**: Class I (Prefabricated modules), Class II (Deployable / Inflatable structures), Class III (ISRU-based additive construction & sintering).
@@ -164,6 +164,32 @@ npm run deploy
 ---
 
 ## 📄 License & Attribution
+
 Curated and published for systematic space architecture and extraterrestrial construction research.
-Developed by [@zetazetalun](https://github.com/zetazetalun).
+Developed by **Zhelun Zhu** ([@zetazetalun](https://github.com/zetazetalun)).
+
+### 📚 Academic Citation & Publication
+
+If you use this dashboard, dataset, or methodology in your research, please cite our IAC 2026 conference publication:
+
+> **Z. Zhu, C. Zhao, G. Wang**, *"An AI-Agent Assisted Review of Construction Methods for Extra-Terrestrial Habitats,"* Paper Code: **IAC-26,A5,IP,15,x109703**, International Astronautical Congress (IAC) 2026.
+
+#### Citation Download & Reference Files:
+- 📥 **Download RIS Citation File**: [**IAC26_Zhu_Review_ETEs.ris**](./public/IAC26_Zhu_Review_ETEs.ris) *(Compatible with EndNote, Zotero, Mendeley, Citavi, and RefWorks)*
+- 🌐 **Live RIS Link**: [https://zetazetalun.github.io/Class-III-CMs-for-ETEs---Data-VIS/IAC26_Zhu_Review_ETEs.ris](https://zetazetalun.github.io/Class-III-CMs-for-ETEs---Data-VIS/IAC26_Zhu_Review_ETEs.ris)
+
+```bibtex
+@inproceedings{zhu2026extra_terrestrial_habitats,
+  title     = {An AI-Agent Assisted Review of Construction Methods for Extra-Terrestrial Habitats},
+  author    = {Zhu, Zhelun and Zhao, Chen and Wang, Guang},
+  booktitle = {International Astronautical Congress (IAC 2026)},
+  note      = {Paper Code: IAC-26,A5,IP,15,x109703},
+  year      = {2026},
+  url       = {https://zetazetalun.github.io/Class-III-CMs-for-ETEs---Data-VIS/}
+}
+```
+
+---
+
 Live preview accessible at [https://ais-pre-yu7erqga22rpblk5wo73gb-384167759363.asia-east1.run.app](https://ais-pre-yu7erqga22rpblk5wo73gb-384167759363.asia-east1.run.app).
+GitHub Pages deployment at [https://zetazetalun.github.io/Class-III-CMs-for-ETEs---Data-VIS/](https://zetazetalun.github.io/Class-III-CMs-for-ETEs---Data-VIS/).

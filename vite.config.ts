@@ -8,10 +8,6 @@ export default defineConfig(({mode}) => {
   return {
     base: './',
     plugins: [react(), tailwindcss()],
-    define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      'process.env.GITHUB_TOKEN': JSON.stringify(env.GITHUB_TOKEN),
-    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

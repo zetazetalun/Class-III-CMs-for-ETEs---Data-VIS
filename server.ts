@@ -559,8 +559,24 @@ async function startServer() {
 
 
 
-  // Import JSON file
+  const isAuthorizedAdmin = (req: express.Request): boolean => {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    const serverToken = process.env.GITHUB_TOKEN || process.env.ADMIN_TOKEN;
+    if (serverToken && token === serverToken) return true;
+
+    // Allow loopback local requests in dev
+    const ip = req.ip || req.socket.remoteAddress || '';
+    if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return true;
+
+    return false;
+  };
+
+  // Import JSON file (Protected)
   app.post("/api/sync/import-json", (req, res) => {
+    if (!isAuthorizedAdmin(req)) {
+      return res.status(403).json({ error: "Access denied. Administrative authorization required." });
+    }
     try {
       const data = req.body;
       if (!data || !data.papers || !Array.isArray(data.papers)) {
@@ -647,6 +663,9 @@ async function startServer() {
   });
 
   app.post("/api/vis-state/snapshots/:id/restore", (req, res) => {
+    if (!isAuthorizedAdmin(req)) {
+      return res.status(403).json({ error: "Access denied. Administrative authorization required to restore snapshots." });
+    }
     const snapId = req.params.id;
     try {
       const snapshot = db.prepare("SELECT * FROM vis_snapshots WHERE id = ?").get(snapId) as any;
@@ -1003,16 +1022,24 @@ ${metadata.notes ? `### Relevance & Research Notes\n${metadata.notes}\n` : ''}
     }
   });
 
-  // Download contribution manuscript file
+  // Download contribution manuscript file (with strict path-containment security check)
   app.get("/api/contributions/:id/download", (req, res) => {
     try {
       const row: any = db.prepare(`SELECT * FROM contributions WHERE id = ?`).get(req.params.id);
-      if (!row || !row.file_path || !existsSync(row.file_path)) {
+      if (!row || !row.file_path) {
         return res.status(404).send("Contribution file not found.");
       }
-      res.download(row.file_path, row.file_name);
+
+      // Strict path traversal defense: ensure file is strictly inside contributionsDir
+      const resolvedTarget = path.resolve(row.file_path);
+      const resolvedBase = path.resolve(contributionsDir);
+      if (!resolvedTarget.startsWith(resolvedBase) || !existsSync(resolvedTarget)) {
+        return res.status(404).send("Contribution file not found or invalid path.");
+      }
+
+      res.download(resolvedTarget, path.basename(row.file_name || 'manuscript.pdf'));
     } catch (err: any) {
-      res.status(500).send("Error reading contribution file: " + err.message);
+      res.status(500).send("Error reading contribution file.");
     }
   });
 
@@ -1334,21 +1361,10 @@ ${metadata.notes ? `### Relevance & Research Notes\n${metadata.notes}\n` : ''}
 
   // Verify Admin Identity Endpoint
   app.post("/api/auth/verify", async (req, res) => {
-    const { token, username } = req.body;
+    const { token } = req.body;
     const adminOwner = "zetazetalun";
 
-    // 1. Direct username check
-    if (username && String(username).toLowerCase().trim() === adminOwner) {
-      return res.json({
-        success: true,
-        authorized: true,
-        username: adminOwner,
-        role: "Project Owner",
-        avatarUrl: "https://github.com/zetazetalun.png"
-      });
-    }
-
-    // 2. Personal Access Token check against GitHub API
+    // 1. Personal Access Token check against GitHub API
     if (token && typeof token === 'string' && token.trim()) {
       try {
         const userRes = await fetch("https://api.github.com/user", {
