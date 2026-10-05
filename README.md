@@ -105,8 +105,8 @@ An interactive, high-performance data visualization dashboard and scientific exp
 ### 1. Installation
 Clone the repository and install all dependencies:
 ```bash
-git clone https://github.com/zetazetalun/Space-Architecture-Literature.git
-cd Space-Architecture-Literature
+git clone https://github.com/zetazetalun/Class-III-CMs-for-ETEs---Data-VIS.git
+cd Class-III-CMs-for-ETEs---Data-VIS
 npm install
 ```
 
@@ -142,12 +142,12 @@ npm start
 The repository is configured for automated deployment to **GitHub Pages** with zero backend infrastructure:
 
 ### Method A: Automated GitHub Actions (Recommended)
-1. Go to your repository on GitHub: `https://github.com/zetazetalun/SRL-on-Space-Architecture`
+1. Go to your repository on GitHub: `https://github.com/zetazetalun/Class-III-CMs-for-ETEs---Data-VIS`
 2. Navigate to **Settings** > **Pages** (in the left sidebar).
 3. Under **Build and deployment** > **Source**, change from *Deploy from a branch* to **GitHub Actions**.
 4. Whenever you push to the `main` branch, the workflow (`.github/workflows/deploy-pages.yml`) builds and deploys the dashboard automatically.
 5. Your live site will be accessible at:
-   `https://zetazetalun.github.io/SRL-on-Space-Architecture/`
+   `https://zetazetalun.github.io/Class-III-CMs-for-ETEs---Data-VIS/`
 
 ### Method B: Single-Command Manual Deployment
 You can also build and publish directly from your local terminal:

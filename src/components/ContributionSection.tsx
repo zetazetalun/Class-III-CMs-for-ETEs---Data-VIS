@@ -31,7 +31,7 @@ interface ContributionSectionProps {
 }
 
 const REPO_OWNER = 'zetazetalun';
-const REPO_NAME = 'SRL-on-Space-Architecture';
+const REPO_NAME = 'Class-III-CMs-for-ETEs---Data-VIS';
 const REPO_FULL = `${REPO_OWNER}/${REPO_NAME}`;
 
 export const ContributionSection: React.FC<ContributionSectionProps> = ({ onPaperContributed }) => {

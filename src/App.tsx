@@ -17,7 +17,8 @@ import {
   ExternalLink,
   Layers,
   Share2,
-  UploadCloud
+  UploadCloud,
+  ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ResearchParameter, Paper, MappingResult, ReviewSummary, ChatMessage } from './types';
@@ -26,6 +27,8 @@ import { getDynamicCounts, getDynamicHeatmap, normalizeValue, getPaperParameterV
 import InteractiveChartBuilder from './components/InteractiveChartBuilder';
 import KnowledgeGraph from './components/KnowledgeGraph';
 import { ContributionSection } from './components/ContributionSection';
+import { AccessAnalyticsDashboard } from './components/AccessAnalyticsDashboard';
+import { telemetry } from './lib/telemetry';
 import { 
   BarChart, 
   Bar, 
@@ -150,7 +153,7 @@ const DEFAULT_PARAMETERS: ResearchParameter[] = [
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'analysis' | 'interactive' | 'graph' | 'source' | 'chat' | 'contribute'>('analysis');
+  const [activeTab, setActiveTab] = useState<'analysis' | 'interactive' | 'graph' | 'source' | 'chat' | 'contribute' | 'analytics'>('analysis');
   const [parameters] = useState<ResearchParameter[]>(DEFAULT_PARAMETERS);
   
   const [papersState, setPapersState] = useState<Paper[]>([]);
@@ -496,7 +499,9 @@ export default function App() {
 
   const handleSendMessage = async () => {
     if (!inputMessage.trim() || !summary) return;
-    const userMsg: ChatMessage = { role: 'user', content: inputMessage };
+    const userQuery = inputMessage.trim();
+    telemetry.trackChatQuestion(userQuery);
+    const userMsg: ChatMessage = { role: 'user', content: userQuery };
     setChatMessages(prev => [...prev, userMsg]);
     setInputMessage('');
 
@@ -513,6 +518,7 @@ export default function App() {
 
   useEffect(() => {
     setIsMounted(true);
+    telemetry.trackVisAccess();
     fetchVisualizationState(true);
   }, []);
 
@@ -526,33 +532,57 @@ export default function App() {
         
         <NavButton 
           active={activeTab === 'analysis'} 
-          onClick={() => setActiveTab('analysis')} 
+          onClick={() => {
+            telemetry.trackSidebarClick('analysis', 'Review');
+            setActiveTab('analysis');
+          }} 
           icon={<BarChart3 size={20} />} 
           label="Review" 
         />
         <NavButton 
           active={activeTab === 'interactive'} 
-          onClick={() => setActiveTab('interactive')} 
+          onClick={() => {
+            telemetry.trackSidebarClick('interactive', 'Charts');
+            setActiveTab('interactive');
+          }} 
           icon={<Layers size={20} />} 
           label="Charts" 
         />
         <NavButton 
           active={activeTab === 'source'} 
-          onClick={() => setActiveTab('source')} 
+          onClick={() => {
+            telemetry.trackSidebarClick('source', 'Literature');
+            setActiveTab('source');
+          }} 
           icon={<FileText size={20} />} 
           label="Literature" 
         />
         <NavButton 
           active={activeTab === 'chat'} 
-          onClick={() => setActiveTab('chat')} 
+          onClick={() => {
+            telemetry.trackSidebarClick('chat', 'Chatbox');
+            setActiveTab('chat');
+          }} 
           icon={<MessageSquare size={20} />} 
           label="Chatbox" 
         />
         <NavButton 
           active={activeTab === 'contribute'} 
-          onClick={() => setActiveTab('contribute')} 
+          onClick={() => {
+            telemetry.trackSidebarClick('contribute', 'Contribute');
+            setActiveTab('contribute');
+          }} 
           icon={<UploadCloud size={20} />} 
           label="Contribute" 
+        />
+        <NavButton 
+          active={activeTab === 'analytics'} 
+          onClick={() => {
+            telemetry.trackSidebarClick('analytics', 'Analytics');
+            setActiveTab('analytics');
+          }} 
+          icon={<ShieldCheck size={20} />} 
+          label="Analytics" 
         />
 
         <div className="mt-auto pb-4 flex flex-col items-center gap-3">
@@ -573,7 +603,7 @@ export default function App() {
         {/* Sticky Top Header */}
         <header className="h-16 bg-white border-b border-black/5 flex items-center justify-between px-6 sm:px-8 sticky top-0 z-40">
           <div className="flex items-center gap-3">
-            <h1 className="text-base sm:text-lg font-semibold tracking-tight">Systematic Literature Review for CMs in ETEs</h1>
+            <h1 className="text-base sm:text-lg font-semibold tracking-tight">Systematic Literature Review for Class III CMs in ETEs</h1>
           </div>
           
           <div className="flex items-center gap-2.5">
@@ -940,7 +970,9 @@ export default function App() {
                     <InteractiveChartBuilder 
                       papers={reviewPapers.length > 0 ? reviewPapers : papersState} 
                       mappings={reviewMappings.length > 0 ? reviewMappings : mappingsState} 
-                      parameters={parameters} 
+                      parameters={parameters}
+                      onChartGenerated={(p1, p2, ct) => telemetry.trackChartGenerated(p1, p2, ct)}
+                      onChartDownloaded={() => telemetry.trackChartDownload('Interactive Chart')}
                     />
                   </section>
                 </motion.div>
@@ -1155,6 +1187,17 @@ export default function App() {
                   exit={{ opacity: 0, y: -10 }}
                 >
                   <ContributionSection onPaperContributed={() => fetchVisualizationState(false)} />
+                </motion.div>
+              )}
+
+              {activeTab === 'analytics' && (
+                <motion.div 
+                  key="analytics"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                >
+                  <AccessAnalyticsDashboard onBackToPresentation={() => setActiveTab('analysis')} />
                 </motion.div>
               )}
             </AnimatePresence>

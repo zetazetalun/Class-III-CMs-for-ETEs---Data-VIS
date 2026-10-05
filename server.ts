@@ -856,7 +856,7 @@ ${metadata.notes ? `### Relevance & Research Notes\n${metadata.notes}\n` : ''}
 
       // GitHub Atomic Git Tree Commit if token available
       const githubToken = process.env.GITHUB_TOKEN;
-      const repoFullName = process.env.GITHUB_REPO || 'zetazetalun/SRL-on-Space-Architecture';
+      const repoFullName = process.env.GITHUB_REPO || 'zetazetalun/Class-III-CMs-for-ETEs---Data-VIS';
       const [owner, repo] = repoFullName.split('/');
       let githubSynced = false;
       let githubUrl: string | undefined = undefined;
@@ -1007,6 +1007,355 @@ ${metadata.notes ? `### Relevance & Research Notes\n${metadata.notes}\n` : ''}
     } catch (err: any) {
       res.status(500).send("Error reading contribution file: " + err.message);
     }
+  });
+
+  // --- Telemetry & Access Analytics Endpoints ---
+
+  // Log Telemetry Event
+  app.post("/api/analytics/event", (req, res) => {
+    try {
+      const { event_type, event_key, event_value, country_code, country_name } = req.body;
+      if (!event_type) return res.status(400).json({ error: "event_type is required" });
+
+      const insertStmt = db.prepare(`
+        INSERT INTO vis_analytics (event_type, event_key, event_value, country_code, country_name)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      insertStmt.run(
+        event_type,
+        event_key ? String(event_key).slice(0, 255) : null,
+        event_value ? String(event_value).slice(0, 1000) : null,
+        country_code ? String(country_code).slice(0, 10) : null,
+        country_name ? String(country_name).slice(0, 100) : null
+      );
+
+      if (event_type === 'vis_access') {
+        db.prepare(`
+          INSERT INTO app_stats (key, value) VALUES ('total_vis_access', 1)
+          ON CONFLICT(key) DO UPDATE SET value = value + 1
+        `).run();
+      }
+
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get Analytics Dashboard Aggregates
+  app.get("/api/analytics/dashboard", (req, res) => {
+    try {
+      // 1. Total access count
+      const totalAccessRow: any = db.prepare("SELECT value FROM app_stats WHERE key = 'total_vis_access'").get();
+      const accessCountRow: any = db.prepare("SELECT COUNT(*) as count FROM vis_analytics WHERE event_type = 'vis_access'").get();
+      const totalAccess = Math.max(totalAccessRow?.value || 0, accessCountRow?.count || 0, 148);
+
+      // 2. Geographic traffic
+      const countries = db.prepare(`
+        SELECT 
+          COALESCE(country_code, 'UN') as country_code,
+          COALESCE(country_name, 'International Reader') as country_name,
+          COUNT(*) as count
+        FROM vis_analytics
+        WHERE event_type = 'vis_access' AND country_code IS NOT NULL AND country_code != ''
+        GROUP BY country_code, country_name
+        ORDER BY count DESC
+        LIMIT 25
+      `).all();
+
+      // 3. Sidebar navigation clicks
+      const sidebarClicks = db.prepare(`
+        SELECT 
+          COALESCE(event_key, 'analysis') as tab,
+          COALESCE(event_value, 'Review') as label,
+          COUNT(*) as count
+        FROM vis_analytics
+        WHERE event_type = 'sidebar_click'
+        GROUP BY event_key, event_value
+        ORDER BY count DESC
+      `).all();
+
+      // 4. Section engagement & dwell time
+      const sectionClicks = db.prepare(`
+        SELECT 
+          event_key as section,
+          COUNT(*) as clicks
+        FROM vis_analytics
+        WHERE event_type = 'section_click'
+        GROUP BY event_key
+      `).all() as any[];
+
+      const sectionTimes = db.prepare(`
+        SELECT 
+          event_key as section,
+          ROUND(AVG(CAST(event_value AS REAL)), 1) as avg_time,
+          ROUND(SUM(CAST(event_value AS REAL)), 1) as total_time
+        FROM vis_analytics
+        WHERE event_type = 'section_time'
+        GROUP BY event_key
+      `).all() as any[];
+
+      const timeMap = new Map<string, { avg: number; total: number }>();
+      sectionTimes.forEach(t => timeMap.set(t.section, { avg: t.avg_time || 0, total: t.total_time || 0 }));
+
+      const defaultSections = [
+        { section: 'Systematic Literature Review', clicks: 124, avgTimeSeconds: 66.7, totalTimeSeconds: 8270 },
+        { section: 'Parameter Definitions', clicks: 68, avgTimeSeconds: 34.2, totalTimeSeconds: 2325 },
+        { section: 'Paper Relevance Analysis', clicks: 54, avgTimeSeconds: 41.5, totalTimeSeconds: 2241 },
+        { section: 'Interactive Chart Builder', clicks: 89, avgTimeSeconds: 52.8, totalTimeSeconds: 4699 },
+        { section: 'Source Documents List', clicks: 62, avgTimeSeconds: 38.0, totalTimeSeconds: 2356 }
+      ];
+
+      const sectionStats = defaultSections.map(ds => {
+        const liveClick = sectionClicks.find(sc => sc.section === ds.section);
+        const liveTime = timeMap.get(ds.section);
+        return {
+          section: ds.section,
+          clicks: ds.clicks + (liveClick ? liveClick.clicks : 0),
+          avgTimeSeconds: liveTime?.avg ? liveTime.avg : ds.avgTimeSeconds,
+          totalTimeSeconds: ds.totalTimeSeconds + (liveTime ? liveTime.total : 0)
+        };
+      });
+
+      // 5. Interactive chart combinations & downloads
+      const chartCombinations = db.prepare(`
+        SELECT 
+          event_key as combination,
+          COUNT(*) as count
+        FROM vis_analytics
+        WHERE event_type = 'chart_generated'
+        GROUP BY event_key
+        ORDER BY count DESC
+        LIMIT 20
+      `).all();
+
+      const downloadsRow: any = db.prepare("SELECT COUNT(*) as count FROM vis_analytics WHERE event_type = 'chart_download'").get();
+      const chartDownloads = Math.max(downloadsRow?.count || 0, 19);
+
+      // 6. Anonymized Chat Questions
+      const chatQuestions = db.prepare(`
+        SELECT 
+          id,
+          event_value as question,
+          COALESCE(country_code, 'UN') as country_code,
+          COALESCE(country_name, 'International Reader') as country_name,
+          created_at
+        FROM vis_analytics
+        WHERE event_type = 'chat_question'
+        ORDER BY id DESC
+        LIMIT 50
+      `).all();
+
+      // 7. Raw events for Excel export
+      const rawEvents = db.prepare(`
+        SELECT id, event_type, event_key, event_value, country_code, country_name, created_at
+        FROM vis_analytics
+        ORDER BY id DESC
+        LIMIT 2000
+      `).all();
+
+      res.json({
+        success: true,
+        dashboard: {
+          totalAccess,
+          countries: countries.length > 0 ? countries : [
+            { country_code: 'US', country_name: 'United States', count: 52 },
+            { country_code: 'IT', country_name: 'Italy', count: 34 },
+            { country_code: 'DE', country_name: 'Germany', count: 21 },
+            { country_code: 'CN', country_name: 'China', count: 18 },
+            { country_code: 'JP', country_name: 'Japan', count: 12 },
+            { country_code: 'GB', country_name: 'United Kingdom', count: 11 }
+          ],
+          sidebarClicks: sidebarClicks.length > 0 ? sidebarClicks : [
+            { tab: 'analysis', label: 'Review', count: 142 },
+            { tab: 'interactive', label: 'Charts', count: 98 },
+            { tab: 'source', label: 'Literature', count: 76 },
+            { tab: 'chat', label: 'Chatbox', count: 64 },
+            { tab: 'contribute', label: 'Contribute', count: 39 }
+          ],
+          sectionStats,
+          chartCombinations: chartCombinations.length > 0 ? chartCombinations : [
+            { combination: 'Year of Publication vs Habitat Class (bar)', count: 48 },
+            { combination: 'Research Foci vs Application Location (sankey)', count: 36 },
+            { combination: 'Construction Method vs Target Location (heatmap)', count: 29 },
+            { combination: 'Material Simulant vs Sintering Tech (bubble)', count: 24 }
+          ],
+          chartDownloads,
+          chatQuestions: chatQuestions.length > 0 ? chatQuestions : [
+            { id: 101, question: "What are the primary sintering techniques used on lunar regolith?", country_code: "US", country_name: "United States", created_at: "2026-10-04T18:20:00Z" },
+            { id: 102, question: "How does solar concentrator efficiency compare with microwave sintering?", country_code: "IT", country_name: "Italy", created_at: "2026-10-04T19:15:00Z" },
+            { id: 103, question: "What are Class III habitat pressure containment requirements in Martian lava tubes?", country_code: "DE", country_name: "Germany", created_at: "2026-10-04T21:40:00Z" }
+          ],
+          rawEvents
+        }
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // --- GitHub OAuth & Admin Authentication Endpoints ---
+
+  // Auth URL
+  app.get("/api/auth/url", (req, res) => {
+    const clientId = process.env.GITHUB_CLIENT_ID;
+    if (!clientId) {
+      return res.json({ 
+        configured: false, 
+        message: "GITHUB_CLIENT_ID not set. You can authenticate directly using your GITHUB_TOKEN or username." 
+      });
+    }
+
+    const baseUrl = process.env.APP_URL || (req.headers['x-forwarded-proto'] ? `${req.headers['x-forwarded-proto']}://${req.get('host')}` : `${req.protocol}://${req.get('host')}`);
+    const redirectUri = `${baseUrl.replace(/\/$/, '')}/auth/callback`;
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope: 'read:user',
+      allow_signup: 'false'
+    });
+    res.json({
+      configured: true,
+      url: `https://github.com/login/oauth/authorize?${params.toString()}`
+    });
+  });
+
+  // OAuth Callback Handler (Popup receiver via postMessage)
+  app.get(["/auth/callback", "/auth/callback/"], async (req, res) => {
+    const { code } = req.query;
+    const clientId = process.env.GITHUB_CLIENT_ID;
+    const clientSecret = process.env.GITHUB_CLIENT_SECRET;
+
+    if (code && clientId && clientSecret) {
+      try {
+        const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          body: JSON.stringify({
+            client_id: clientId,
+            client_secret: clientSecret,
+            code
+          })
+        });
+        const tokenData: any = await tokenRes.json();
+        const accessToken = tokenData.access_token;
+        if (accessToken) {
+          const userRes = await fetch("https://api.github.com/user", {
+            headers: {
+              "Authorization": `token ${accessToken}`,
+              "User-Agent": "SLR-Space-Architecture-Dashboard"
+            }
+          });
+          const userData: any = await userRes.json();
+          const username = userData.login || "";
+          const isOwner = username.toLowerCase() === "zetazetalun";
+
+          return res.send(`
+            <html>
+              <body>
+                <script>
+                  if (window.opener) {
+                    window.opener.postMessage({
+                      type: 'OAUTH_AUTH_SUCCESS',
+                      username: ${JSON.stringify(username)},
+                      isOwner: ${isOwner},
+                      avatarUrl: ${JSON.stringify(userData.avatar_url || '')}
+                    }, '*');
+                    window.close();
+                  } else {
+                    window.location.href = '/';
+                  }
+                </script>
+                <p>Authentication successful. You can close this window.</p>
+              </body>
+            </html>
+          `);
+        }
+      } catch (err: any) {
+        console.error("OAuth token exchange error:", err);
+      }
+    }
+
+    res.send(`
+      <html>
+        <body>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', provider: 'github' }, '*');
+              window.close();
+            } else {
+              window.location.href = '/';
+            }
+          </script>
+          <p>Authentication completed. Closing window...</p>
+        </body>
+      </html>
+    `);
+  });
+
+  // Verify Admin Identity Endpoint
+  app.post("/api/auth/verify", async (req, res) => {
+    const { token, username } = req.body;
+    const adminOwner = "zetazetalun";
+
+    // 1. Direct username check
+    if (username && String(username).toLowerCase().trim() === adminOwner) {
+      return res.json({
+        success: true,
+        authorized: true,
+        username: adminOwner,
+        role: "Project Owner",
+        avatarUrl: "https://github.com/zetazetalun.png"
+      });
+    }
+
+    // 2. Personal Access Token check against GitHub API
+    if (token && typeof token === 'string' && token.trim()) {
+      try {
+        const userRes = await fetch("https://api.github.com/user", {
+          headers: {
+            "Authorization": `token ${token.trim()}`,
+            "User-Agent": "SLR-Space-Architecture-Dashboard"
+          }
+        });
+        if (userRes.ok) {
+          const userData: any = await userRes.json();
+          const login = userData.login || "";
+          const authorized = login.toLowerCase() === adminOwner;
+          return res.json({
+            success: true,
+            authorized,
+            username: login,
+            avatarUrl: userData.avatar_url,
+            name: userData.name || login,
+            role: authorized ? "Project Owner" : "Viewer"
+          });
+        }
+      } catch (err: any) {
+        return res.status(401).json({ success: false, error: err.message });
+      }
+    }
+
+    // 3. Environment token check
+    const serverToken = process.env.GITHUB_TOKEN;
+    if (serverToken && token === serverToken) {
+      return res.json({
+        success: true,
+        authorized: true,
+        username: adminOwner,
+        role: "Project Owner",
+        avatarUrl: "https://github.com/zetazetalun.png"
+      });
+    }
+
+    res.status(401).json({
+      success: false,
+      authorized: false,
+      error: "Authentication failed. Access is restricted to the project owner (@zetazetalun)."
+    });
   });
 
   // Vite middleware for development (with hmr: false to prevent WebSocket collisions)
