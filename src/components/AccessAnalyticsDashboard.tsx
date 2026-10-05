@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
-import { telemetry, AnalyticsDashboardData, TelemetryEvent, VisitLogEntry } from '../lib/telemetry';
+import { telemetry, AnalyticsDashboardData, TelemetryEvent, VisitLogEntry, getTelemetryApiUrl } from '../lib/telemetry';
 
 const AUTHORIZED_OWNER = 'zetazetalun';
 
@@ -149,10 +149,12 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
     setAuthError(null);
 
     try {
-      const res = await fetch('/api/auth/verify', {
+      const verifyEndpoint = getTelemetryApiUrl('/api/auth/verify');
+      const res = await fetch(verifyEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: inputToken.trim() })
+        body: JSON.stringify({ token: inputToken.trim() }),
+        mode: 'cors'
       });
 
       if (res.ok) {
@@ -204,7 +206,7 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
     setIsAuthenticating(true);
     setAuthError(null);
     try {
-      const response = await fetch('/api/auth/url');
+      const response = await fetch(getTelemetryApiUrl('/api/auth/url'), { mode: 'cors' });
       if (!response.ok) throw new Error('Failed to get OAuth URL');
       const data = await response.json();
 

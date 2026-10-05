@@ -37,6 +37,21 @@ export interface AnalyticsDashboardData {
   rawEvents: TelemetryEvent[];
 }
 
+// Live Cloud Run backend endpoint for cross-origin telemetry bridge from GitHub Pages
+export const CLOUD_RUN_BACKEND_URL =
+  (import.meta as any).env?.VITE_BACKEND_URL ||
+  'https://ais-pre-yu7erqga22rpblk5wo73gb-384167759363.asia-east1.run.app';
+
+export function getTelemetryApiUrl(path: string): string {
+  // If running on GitHub Pages (static), route requests to the live backend server
+  if (typeof window !== 'undefined' && window.location.hostname.endsWith('github.io')) {
+    const base = CLOUD_RUN_BACKEND_URL.replace(/\/+$/, '');
+    return `${base}${path.startsWith('/') ? path : '/' + path}`;
+  }
+  // Otherwise use relative path on the same origin (local dev or full-stack cloud run)
+  return path;
+}
+
 class TelemetryService {
   private countryCode: string = 'UN';
   private countryName: string = 'International Reader';
@@ -122,15 +137,18 @@ class TelemetryService {
       // ignore local storage errors
     }
 
-    // 2. Post to server endpoint if running with Node.js backend
+    // 2. Post to server endpoint (relative on server, or cross-origin bridge on GitHub Pages)
     try {
-      await fetch('/api/analytics/event', {
+      const endpoint = getTelemetryApiUrl('/api/analytics/event');
+      await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(eventPayload)
+        body: JSON.stringify(eventPayload),
+        mode: 'cors',
+        keepalive: true
       });
     } catch {
-      // Non-fatal if server is absent in static mode
+      // Non-fatal if server is temporarily unreachable
     }
   }
 
@@ -187,9 +205,10 @@ class TelemetryService {
 
   // Retrieve Aggregated Analytics for Dashboard
   public async getDashboardData(): Promise<AnalyticsDashboardData> {
-    // 1. Try server endpoint
+    // 1. Try server endpoint (direct or via cross-origin bridge on GitHub Pages)
     try {
-      const res = await fetch('/api/analytics/dashboard');
+      const endpoint = getTelemetryApiUrl('/api/analytics/dashboard');
+      const res = await fetch(endpoint, { mode: 'cors' });
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.dashboard) {

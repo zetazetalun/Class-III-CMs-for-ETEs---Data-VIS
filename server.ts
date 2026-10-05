@@ -152,6 +152,34 @@ async function startServer() {
   console.log(`Working directory: ${process.cwd()}`);
 
   const app = express();
+
+  // CORS Middleware: Allow GitHub Pages, Cloud Run, and local origins
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      if (
+        origin.endsWith('.github.io') ||
+        origin.endsWith('.run.app') ||
+        origin.includes('localhost') ||
+        origin.includes('127.0.0.1')
+      ) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+      }
+    } else {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    }
+
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    next();
+  });
+
   app.use(express.json({ limit: '100mb' }));
   app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
