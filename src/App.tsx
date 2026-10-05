@@ -177,6 +177,40 @@ export default function App() {
   const [inputMessage, setInputMessage] = useState('');
 
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [copiedCitation, setCopiedCitation] = useState(false);
+
+  const handleCopyCitation = () => {
+    const text = 'Z. Zhu, C. Zhao, G. Wang “An AI-Agent Assisted Review of Construction Methods for Extra-Terrestrial Habitats,” paper code: IAC-26,A5,IP,15,x109703, International Astronautical Congress 2026.';
+    navigator.clipboard.writeText(text);
+    setCopiedCitation(true);
+    setTimeout(() => setCopiedCitation(false), 2000);
+  };
+
+  const handleDownloadRis = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const risContent = `TY  - CONF
+TI  - An AI-Agent Assisted Review of Construction Methods for Extra-Terrestrial Habitats
+AU  - Zhu, Z.
+AU  - Zhao, C.
+AU  - Wang, G.
+T2  - International Astronautical Congress 2026
+C3  - IAC 2026
+PY  - 2026
+M1  - IAC-26,A5,IP,15,x109703
+N1  - Paper Code: IAC-26,A5,IP,15,x109703
+UR  - https://zetazetalun.github.io/Class-III-CMs-for-ETEs---Data-VIS/
+ER  - 
+`;
+    const blob = new Blob([risContent], { type: 'application/x-research-info-systems;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'IAC26_Zhu_Review_ETEs.ris';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   // Collect available publication years
   const availableYears = useMemo(() => {
@@ -1206,16 +1240,59 @@ export default function App() {
 
         {/* Global Academic Attribution Footer */}
         <footer className="mt-auto py-10 px-8 border-t border-black/5 bg-white/50 backdrop-blur-sm">
-          <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
-            <div className="space-y-1">
+          <div className="max-w-7xl mx-auto flex flex-col lg:flex-row justify-between items-start gap-8">
+            <div className="space-y-1 shrink-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-black/30">Created by:</p>
               <p className="text-sm font-semibold text-black/80">朱哲伦 (ZHU Zhelun), PhD, P.E., M.Eng.</p>
               <a href="mailto:zhelunzhu@gmail.com" className="text-xs text-black/50 hover:text-black transition-colors underline underline-offset-4 decoration-black/10">
                 zhelunzhu@gmail.com
               </a>
             </div>
+
+            {/* Academic Citation Block with RIS link */}
+            <div className="space-y-2.5 max-w-xl bg-black/[0.02] border border-black/5 p-4 rounded-2xl w-full">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-black/40 flex items-center gap-1.5">
+                  <FileText size={12} className="text-indigo-600" />
+                  <span>Cite this Work</span>
+                </p>
+                <div className="flex items-center gap-2">
+                  <a
+                    href="./IAC26_Zhu_Review_ETEs.ris"
+                    download="IAC26_Zhu_Review_ETEs.ris"
+                    onClick={handleDownloadRis}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-black/10 hover:border-black/20 text-black/80 text-[11px] font-semibold transition-all shadow-2xs cursor-pointer hover:bg-black/[0.02]"
+                    title="Download citation in RIS format for EndNote, Zotero, Mendeley"
+                  >
+                    <Download size={11} className="text-indigo-600" />
+                    <span>Download .RIS</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={handleCopyCitation}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-black/10 hover:border-black/20 text-black/80 text-[11px] font-semibold transition-all shadow-2xs cursor-pointer hover:bg-black/[0.02]"
+                    title="Copy formatted citation"
+                  >
+                    {copiedCitation ? (
+                      <>
+                        <CheckCircle2 size={11} className="text-emerald-600" />
+                        <span className="text-emerald-700">Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={11} className="text-black/50" />
+                        <span>Copy Citation</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-black/75 leading-relaxed font-sans">
+                Z. Zhu, C. Zhao, G. Wang “An AI-Agent Assisted Review of Construction Methods for Extra-Terrestrial Habitats,” paper code: <span className="font-mono font-medium text-black/90">IAC-26,A5,IP,15,x109703</span>, International Astronautical Congress 2026.
+              </p>
+            </div>
             
-            <div className="md:text-right space-y-1 max-w-sm">
+            <div className="lg:text-right space-y-1 max-w-sm shrink-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-black/30">Creative Copyright</p>
               <p className="text-sm font-semibold text-black/80 italic tracking-tight">Attribution-NonCommercial (CC BY-NC)</p>
               <p className="text-[10px] leading-relaxed text-black/40">
