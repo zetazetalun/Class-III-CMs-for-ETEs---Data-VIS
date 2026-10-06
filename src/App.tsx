@@ -1292,13 +1292,24 @@ ER  -
               </a>
             </div>
             
-            <div className="md:text-right space-y-1 max-w-sm">
-              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-black/30">Creative Copyright</p>
-              <p className="text-sm font-semibold text-black/80 italic tracking-tight">Attribution-NonCommercial (CC BY-NC)</p>
+            <div className="md:text-right space-y-1.5 max-w-sm">
+              <div className="flex items-center md:justify-end gap-2">
+                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-black/30">Creative Copyright</span>
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-medium bg-black/5 text-black/60 border border-black/5">CC BY-NC 4.0</span>
+              </div>
+              <p className="text-sm font-semibold text-black/80 italic tracking-tight">
+                <a 
+                  href="https://creativecommons.org/licenses/by-nc/4.0/" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="hover:underline underline-offset-4 decoration-black/20"
+                >
+                  Attribution-NonCommercial 4.0 International
+                </a>
+              </p>
               <p className="text-[10px] leading-relaxed text-black/40">
-                This license allows others to remix, adapt, and build upon this work non-commercially. 
-                New works must acknowledge the creator and be non-commercial. 
-                Commercial use of this content is strictly prohibited without explicit permission.
+                Allows remixing, adapting, and building upon this work non-commercially with attribution. 
+                View repository <a href="https://github.com/zetazetalun/Class-III-CMs-for-ETEs---Data-VIS/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="underline hover:text-black transition-colors">LICENSE</a>.
               </p>
             </div>
           </div>

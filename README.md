@@ -165,8 +165,14 @@ npm run deploy
 
 ## 📄 License & Attribution
 
+This work and dataset are licensed under the **Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0)**.
+See the full [**LICENSE**](./LICENSE) file for legal terms.
+
+- **Non-Commercial**: You may copy, redistribute, remix, transform, and build upon the material in any medium or format for non-commercial research and educational purposes.
+- **Attribution**: You must give appropriate credit to the author, provide a link to the license, and indicate if changes were made.
+
 Curated and published for systematic space architecture and extraterrestrial construction research.
-Developed by **Zhelun Zhu** ([@zetazetalun](https://github.com/zetazetalun)).
+Developed by **朱哲伦 (ZHU Zhelun), PhD, P.E., M.Eng.** ([@zetazetalun](https://github.com/zetazetalun)).
 
 ### 📚 Academic Citation & Publication
 
