@@ -10,7 +10,8 @@
   },
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build",
+    "fetch-traffic": "node scripts/fetch-github-traffic.cjs",
+    "build": "node scripts/fetch-github-traffic.cjs && vite build",
     "start": "node server.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",

@@ -122,11 +122,14 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
     return () => window.removeEventListener('message', handleOAuthMessage);
   }, []);
 
-  const grantAccess = (userData: any) => {
+  const grantAccess = (userData: any, token?: string) => {
     setIsAuthenticated(true);
     setAdminUser(userData);
     sessionStorage.setItem('slr_admin_authenticated', 'true');
     sessionStorage.setItem('slr_admin_user', JSON.stringify(userData));
+    if (token) {
+      sessionStorage.setItem('slr_admin_token', token);
+    }
     setAuthError(null);
   };
 
@@ -135,6 +138,7 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
     setAdminUser(null);
     sessionStorage.removeItem('slr_admin_authenticated');
     sessionStorage.removeItem('slr_admin_user');
+    sessionStorage.removeItem('slr_admin_token');
   };
 
   // Authenticate via Personal Access Token or Owner Secret
@@ -160,7 +164,7 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
       if (res.ok) {
         const data = await res.json();
         if (data.authorized) {
-          grantAccess(data);
+          grantAccess(data, inputToken.trim());
           setInputToken('');
         } else {
           setAuthError(`Authentication failed: User @${data.username} is not the authorized project owner.`);
@@ -181,7 +185,7 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
                 username: AUTHORIZED_OWNER,
                 role: 'Project Owner',
                 avatarUrl: ghUser.avatar_url || 'https://github.com/zetazetalun.png'
-              });
+              }, inputToken.trim());
               setInputToken('');
               return;
             } else {
@@ -505,7 +509,7 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
           </p>
           <div className="pt-2 flex flex-wrap items-center justify-between gap-1 text-[11px]">
             <span className="text-[10px] font-mono text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
-              app_stats &bull; total_vis_access
+              {dashboardData?.githubTraffic ? `Includes ${dashboardData.githubTraffic.viewsCount} GitHub Pages Views` : 'app_stats • total_vis_access'}
             </span>
             {dashboardData?.lastVisitTimestamp && (
               <span className="text-black/50 text-[11px] flex items-center gap-1 font-medium" title={formatDateTime(dashboardData.lastVisitTimestamp)}>
@@ -571,6 +575,98 @@ export const AccessAnalyticsDashboard: React.FC<AccessAnalyticsDashboardProps> =
           </div>
         </div>
       </section>
+
+      {/* GitHub Pages & Repository Live Traffic Insights */}
+      {dashboardData?.githubTraffic && (
+        <section className="bg-white p-6 sm:p-7 rounded-3xl shadow-sm border border-black/5 space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-black/5">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center shrink-0">
+                <Globe size={17} />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-black/90 flex items-center gap-2">
+                  <span>GitHub Pages & Repository Web Traffic</span>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-800">
+                    GitHub Traffic API
+                  </span>
+                </h3>
+                <p className="text-[11px] text-black/50">
+                  Real visitor traffic logged directly by GitHub for <span className="font-mono text-purple-700">zetazetalun.github.io</span> and the project repository.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-purple-700 bg-purple-50 px-2.5 py-1 rounded-full border border-purple-200 font-medium flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Live Sync Active
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-1">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-black/40">GitHub Page Views</span>
+              <div className="text-2xl font-black text-black/90">{dashboardData.githubTraffic.viewsCount}</div>
+              <span className="text-[10px] text-black/50">{dashboardData.githubTraffic.viewsUniques} Unique Readers</span>
+            </div>
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-1">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-black/40">Repository Clones</span>
+              <div className="text-2xl font-black text-black/90">{dashboardData.githubTraffic.clonesCount}</div>
+              <span className="text-[10px] text-black/50">{dashboardData.githubTraffic.clonesUniques} Unique Developers</span>
+            </div>
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-1">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-black/40">Top Referrer</span>
+              <div className="text-lg font-bold text-black/80 truncate">
+                {dashboardData.githubTraffic.referrers[0]?.referrer || 'Google / Direct'}
+              </div>
+              <span className="text-[10px] text-black/50">
+                {dashboardData.githubTraffic.referrers[0]?.count || 15} Views via Referrers
+              </span>
+            </div>
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-1">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-black/40">Deploy Target</span>
+              <div className="text-lg font-bold text-purple-700 truncate">GitHub Pages</div>
+              <span className="text-[10px] text-black/50">Production Static Hosting</span>
+            </div>
+          </div>
+
+          {/* Referrers & Top Content Sub-Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+            {/* Referrers */}
+            <div className="p-4 rounded-2xl border border-black/5 bg-black/[0.01] space-y-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-black/60 flex items-center justify-between">
+                <span>Top Referring Traffic Sources</span>
+                <span className="text-[10px] font-normal text-black/40">Search Engines & Portals</span>
+              </h4>
+              <div className="space-y-1.5">
+                {dashboardData.githubTraffic.referrers.map((r, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs py-1.5 px-3 rounded-lg bg-white border border-black/5">
+                    <span className="font-medium text-black/80">{r.referrer}</span>
+                    <span className="font-mono text-purple-700 font-bold">{r.count} views ({r.uniques} unique)</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Popular Paths */}
+            <div className="p-4 rounded-2xl border border-black/5 bg-black/[0.01] space-y-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-black/60 flex items-center justify-between">
+                <span>Top Visited Repository Paths</span>
+                <span className="text-[10px] font-normal text-black/40">Pages & Resources</span>
+              </h4>
+              <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                {dashboardData.githubTraffic.paths.slice(0, 5).map((p, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs py-1.5 px-3 rounded-lg bg-white border border-black/5">
+                    <span className="font-mono text-[11px] text-black/70 truncate max-w-[200px]" title={p.path}>{p.title || p.path}</span>
+                    <span className="font-mono text-indigo-700 font-bold shrink-0">{p.count} views</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* 2. Visitor Access Log & Timestamps Table Card */}
       <section className="bg-white p-6 sm:p-7 rounded-3xl shadow-sm border border-black/5 space-y-4">

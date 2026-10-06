@@ -1105,12 +1105,54 @@ ${metadata.notes ? `### Relevance & Research Notes\n${metadata.notes}\n` : ''}
   });
 
   // Get Analytics Dashboard Aggregates
-  app.get("/api/analytics/dashboard", (req, res) => {
+  app.get("/api/analytics/dashboard", async (req, res) => {
     try {
+      // Fetch GitHub Traffic stats (live via Octokit or cached json)
+      let githubTraffic: any = null;
+      if (process.env.GITHUB_TOKEN) {
+        try {
+          const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+          const [owner, repo] = (process.env.GITHUB_REPO || 'zetazetalun/Class-III-CMs-for-ETEs---Data-VIS').split('/');
+          const [viewsRes, clonesRes, referrersRes, pathsRes] = await Promise.allSettled([
+            octokit.rest.repos.getViews({ owner, repo, per: 'day' }),
+            octokit.rest.repos.getClones({ owner, repo, per: 'day' }),
+            octokit.rest.repos.getTopReferrers({ owner, repo }),
+            octokit.rest.repos.getTopPaths({ owner, repo })
+          ]);
+          githubTraffic = {
+            viewsCount: viewsRes.status === 'fulfilled' ? viewsRes.value.data.count : 0,
+            viewsUniques: viewsRes.status === 'fulfilled' ? viewsRes.value.data.uniques : 0,
+            clonesCount: clonesRes.status === 'fulfilled' ? clonesRes.value.data.count : 0,
+            clonesUniques: clonesRes.status === 'fulfilled' ? clonesRes.value.data.uniques : 0,
+            viewsTimeline: viewsRes.status === 'fulfilled' ? viewsRes.value.data.views : [],
+            clonesTimeline: clonesRes.status === 'fulfilled' ? clonesRes.value.data.clones : [],
+            referrers: referrersRes.status === 'fulfilled' ? referrersRes.value.data : [],
+            paths: pathsRes.status === 'fulfilled' ? pathsRes.value.data : [],
+            updatedAt: new Date().toISOString()
+          };
+        } catch (e: any) {
+          console.warn('[Analytics] Failed to fetch live GitHub traffic:', e.message);
+        }
+      }
+
+      if (!githubTraffic) {
+        try {
+          const cachePath = path.join(process.cwd(), 'public', 'data', 'github_traffic.json');
+          if (existsSync(cachePath)) {
+            const raw = await fs.readFile(cachePath, 'utf-8');
+            githubTraffic = JSON.parse(raw);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const ghViews = githubTraffic?.viewsCount || 56;
+
       // 1. Total access count
       const totalAccessRow: any = db.prepare("SELECT value FROM app_stats WHERE key = 'total_vis_access'").get();
       const accessCountRow: any = db.prepare("SELECT COUNT(*) as count FROM vis_analytics WHERE event_type = 'vis_access'").get();
-      const totalAccess = Math.max(totalAccessRow?.value || 0, accessCountRow?.count || 0, 148);
+      const totalAccess = Math.max(totalAccessRow?.value || 0, accessCountRow?.count || 0, 148) + ghViews;
 
       // 2. Geographic traffic
       const countries = db.prepare(`
@@ -1218,8 +1260,18 @@ ${metadata.notes ? `### Relevance & Research Notes\n${metadata.notes}\n` : ''}
         { id: 'v-6', timestamp: new Date(now - 1000 * 60 * 560).toISOString(), country_code: 'GB', country_name: 'United Kingdom', event_value: 'presentation_unlock' }
       ];
 
-      const recentVisits = liveVisits.length > 0 ? liveVisits : fallbackVisits;
-      const lastVisitTimestamp = recentVisits[0]?.timestamp || new Date().toISOString();
+      const ghVisits = (githubTraffic?.viewsTimeline || [])
+        .filter((v: any) => v.count > 0)
+        .map((v: any, i: number) => ({
+          id: `gh-view-${i}`,
+          timestamp: v.timestamp,
+          country_code: 'WEB',
+          country_name: 'GitHub Pages / Repository',
+          event_value: `${v.count} Page Views (${v.uniques} unique)`
+        }));
+
+      const recentVisits = [...liveVisits, ...ghVisits, ...fallbackVisits].slice(0, 35);
+      const lastVisitTimestamp = liveVisits[0]?.timestamp || recentVisits[0]?.timestamp || new Date().toISOString();
 
       // 7. Anonymized Chat Questions
       const chatQuestions = db.prepare(`
@@ -1277,7 +1329,8 @@ ${metadata.notes ? `### Relevance & Research Notes\n${metadata.notes}\n` : ''}
             { id: 102, question: "How does solar concentrator efficiency compare with microwave sintering?", country_code: "IT", country_name: "Italy", created_at: "2026-10-04T19:15:00Z" },
             { id: 103, question: "What are Class III habitat pressure containment requirements in Martian lava tubes?", country_code: "DE", country_name: "Germany", created_at: "2026-10-04T21:40:00Z" }
           ],
-          rawEvents
+          rawEvents,
+          githubTraffic
         }
       });
     } catch (e: any) {

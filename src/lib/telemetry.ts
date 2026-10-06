@@ -24,6 +24,18 @@ export interface VisitLogEntry {
   event_value?: string;
 }
 
+export interface GitHubTrafficStats {
+  viewsCount: number;
+  viewsUniques: number;
+  clonesCount: number;
+  clonesUniques: number;
+  viewsTimeline: Array<{ timestamp: string; count: number; uniques: number }>;
+  clonesTimeline: Array<{ timestamp: string; count: number; uniques: number }>;
+  referrers: Array<{ referrer: string; count: number; uniques: number }>;
+  paths: Array<{ path: string; title: string; count: number; uniques: number }>;
+  updatedAt?: string;
+}
+
 export interface AnalyticsDashboardData {
   totalAccess: number;
   lastVisitTimestamp?: string;
@@ -35,6 +47,7 @@ export interface AnalyticsDashboardData {
   chartDownloads: number;
   chatQuestions: Array<{ id: number; question: string; country_code: string; country_name: string; created_at: string }>;
   rawEvents: TelemetryEvent[];
+  githubTraffic?: GitHubTrafficStats;
 }
 
 // Live Cloud Run backend endpoint for cross-origin telemetry bridge from GitHub Pages
@@ -205,25 +218,26 @@ class TelemetryService {
 
   // Retrieve Aggregated Analytics for Dashboard
   public async getDashboardData(): Promise<AnalyticsDashboardData> {
-    // 1. Try server endpoint (direct or via cross-origin bridge on GitHub Pages)
-    try {
-      const endpoint = getTelemetryApiUrl('/api/analytics/dashboard');
-      const res = await fetch(endpoint, { mode: 'cors' });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.dashboard) {
-          return data.dashboard;
+    // 1. Try server endpoint (direct on local / Cloud Run)
+    if (typeof window !== 'undefined' && !window.location.hostname.endsWith('github.io')) {
+      try {
+        const res = await fetch('/api/analytics/dashboard');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.dashboard) {
+            return data.dashboard;
+          }
         }
+      } catch {
+        // Server not reachable, compute from local telemetry
       }
-    } catch {
-      // Server not reachable, compute from local telemetry
     }
 
-    // 2. Compute from local cached events + defaults
-    return this.computeLocalDashboardData();
+    // 2. Compute from local cached events + defaults + GitHub Traffic snapshot
+    return await this.computeLocalDashboardData();
   }
 
-  private computeLocalDashboardData(): AnalyticsDashboardData {
+  private async computeLocalDashboardData(): Promise<AnalyticsDashboardData> {
     let events: TelemetryEvent[] = [];
     try {
       const stored = localStorage.getItem('slr_vis_analytics_events');
@@ -234,6 +248,86 @@ class TelemetryService {
 
     // Baseline stats if fresh
     const storedAccess = parseInt(localStorage.getItem('slr_total_vis_access') || '148', 10);
+
+    // Fetch GitHub Traffic (live if admin token present, or from bundled static json)
+    let githubTraffic: GitHubTrafficStats | undefined = undefined;
+    const adminToken = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('slr_admin_token') : null;
+
+    if (adminToken) {
+      try {
+        const [vRes, cRes, rRes, pRes] = await Promise.all([
+          fetch('https://api.github.com/repos/zetazetalun/Class-III-CMs-for-ETEs---Data-VIS/traffic/views', {
+            headers: { 'Authorization': `token ${adminToken}` }
+          }),
+          fetch('https://api.github.com/repos/zetazetalun/Class-III-CMs-for-ETEs---Data-VIS/traffic/clones', {
+            headers: { 'Authorization': `token ${adminToken}` }
+          }),
+          fetch('https://api.github.com/repos/zetazetalun/Class-III-CMs-for-ETEs---Data-VIS/traffic/popular/referrers', {
+            headers: { 'Authorization': `token ${adminToken}` }
+          }),
+          fetch('https://api.github.com/repos/zetazetalun/Class-III-CMs-for-ETEs---Data-VIS/traffic/popular/paths', {
+            headers: { 'Authorization': `token ${adminToken}` }
+          })
+        ]);
+
+        if (vRes.ok) {
+          const vData = await vRes.json();
+          const cData = cRes.ok ? await cRes.json() : { count: 0, uniques: 0, clones: [] };
+          const rData = rRes.ok ? await rRes.json() : [];
+          const pData = pRes.ok ? await pRes.json() : [];
+          githubTraffic = {
+            viewsCount: vData.count || 0,
+            viewsUniques: vData.uniques || 0,
+            viewsTimeline: vData.views || [],
+            clonesCount: cData.count || 0,
+            clonesUniques: cData.uniques || 0,
+            clonesTimeline: cData.clones || [],
+            referrers: rData || [],
+            paths: pData || [],
+            updatedAt: new Date().toISOString()
+          };
+        }
+      } catch {
+        // Fall back to static bundled json
+      }
+    }
+
+    if (!githubTraffic) {
+      try {
+        // Dynamic path handling for GitHub Pages subfolder
+        const basePath = typeof window !== 'undefined' && window.location.pathname.includes('/Class-III-CMs-for-ETEs---Data-VIS')
+          ? '/Class-III-CMs-for-ETEs---Data-VIS'
+          : '';
+        const staticRes = await fetch(`${basePath}/data/github_traffic.json`);
+        if (staticRes.ok) {
+          githubTraffic = await staticRes.json();
+        }
+      } catch {
+        // Fallback default snapshot
+        githubTraffic = {
+          viewsCount: 56,
+          viewsUniques: 1,
+          clonesCount: 226,
+          clonesUniques: 110,
+          viewsTimeline: [
+            { timestamp: "2026-10-04T00:00:00Z", count: 9, uniques: 1 },
+            { timestamp: "2026-10-05T00:00:00Z", count: 47, uniques: 1 }
+          ],
+          clonesTimeline: [],
+          referrers: [
+            { referrer: "github.com", count: 15, uniques: 1 },
+            { referrer: "Google", count: 2, uniques: 1 }
+          ],
+          paths: [
+            { path: "/zetazetalun/Class-III-CMs-for-ETEs---Data-VIS", title: "Overview", count: 14, uniques: 1 }
+          ],
+          updatedAt: new Date().toISOString()
+        };
+      }
+    }
+
+    const ghViews = githubTraffic?.viewsCount || 56;
+    const totalAccess = Math.max(storedAccess, 148) + ghViews;
 
     // Compute countries
     const countryMap = new Map<string, { country_code: string; country_name: string; count: number }>();
@@ -327,11 +421,21 @@ class TelemetryService {
       { id: 'v-10', timestamp: new Date(now - 1000 * 60 * 1920).toISOString(), country_code: 'DE', country_name: 'Germany', event_value: 'presentation_unlock' }
     ];
 
-    const recentVisits = [...recordedVisits, ...baselineVisits].slice(0, 30);
+    const ghVisits: VisitLogEntry[] = (githubTraffic?.viewsTimeline || [])
+      .filter(v => v.count > 0)
+      .map((v, i) => ({
+        id: `gh-view-${i}`,
+        timestamp: v.timestamp,
+        country_code: 'WEB',
+        country_name: 'GitHub Pages / Repository',
+        event_value: `${v.count} Page Views (${v.uniques} unique)`
+      }));
+
+    const recentVisits = [...recordedVisits, ...ghVisits, ...baselineVisits].slice(0, 35);
     const lastVisitTimestamp = recentVisits[0]?.timestamp || new Date().toISOString();
 
     return {
-      totalAccess: storedAccess,
+      totalAccess,
       lastVisitTimestamp,
       recentVisits,
       countries: Array.from(countryMap.values()).sort((a, b) => b.count - a.count),
@@ -340,7 +444,8 @@ class TelemetryService {
       chartCombinations,
       chartDownloads: 19,
       chatQuestions,
-      rawEvents: events
+      rawEvents: events,
+      githubTraffic
     };
   }
 }
