@@ -1,0 +1,38 @@
+name: Process Paper Contribution
+
+on:
+  issues:
+    types: [opened, edited]
+
+# Grant write access to repository contents (to commit into /Contributions/) and issues (to comment & close)
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  archive-contribution:
+    if: >-
+      contains(github.event.issue.labels.*.name, 'contribution') ||
+      contains(github.event.issue.labels.*.name, 'paper-contribution') ||
+      startsWith(github.event.issue.title, '[Contribution]') ||
+      startsWith(github.event.issue.title, '[Paper Submission]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Execute Zero-Server Paper Ingest Script
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: |
+          node .github/scripts/process-contribution.cjs

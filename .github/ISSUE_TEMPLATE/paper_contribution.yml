@@ -1,0 +1,61 @@
+name: '📄 Paper Contribution'
+description: 'Submit a scientific paper, manuscript, or preprint to be included in the literature review'
+title: '[Contribution]: '
+labels: ['contribution']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Systematic Literature Review on Extraterrestrial Architecture
+        Thank you for contributing your research to the project! This issue will be automatically processed by our **Zero-Server GitHub Action** and archived into the repository's `Contributions/` folder.
+
+  - type: input
+    id: doi
+    attributes:
+      label: 'Digital Object Identifier (DOI)'
+      description: 'e.g. 10.1016/j.actaastro.2023.01.018 or https://doi.org/...'
+      placeholder: '10.XXXX/XXXXXX'
+    validations:
+      required: true
+
+  - type: input
+    id: authors
+    attributes:
+      label: 'Author(s) Information'
+      description: 'Primary authors and institutional affiliations'
+      placeholder: 'e.g. Dr. Jane Doe (MIT Media Lab), John Smith (ESA EAC)'
+    validations:
+      required: true
+
+  - type: input
+    id: contact
+    attributes:
+      label: 'Contact Information'
+      description: 'Corresponding author email or primary contact'
+      placeholder: 'author@institution.edu'
+    validations:
+      required: true
+
+  - type: input
+    id: title
+    attributes:
+      label: 'Paper Title'
+      description: 'Title of the research publication'
+      placeholder: 'e.g. Additive Manufacturing with Regolith Simulants in Lunar Orbit'
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: 'Abstract / Context Notes'
+      description: 'Relevant notes, abstract, or methodology summary for the literature review'
+      placeholder: 'Brief summary of key findings, architectural typologies, or ISRU methods...'
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Manuscript File Upload
+        Please drag and drop your manuscript file (**PDF, Word DOCX, or Markdown**) into the comment box below or attach it directly to this issue!
